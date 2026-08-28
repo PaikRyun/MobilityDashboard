@@ -197,6 +197,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Segoe UI",sans-s
 
 /* ── Daily Revenue ─────────────────────────────────── */
 .rev-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.rev-grid-3{grid-template-columns:1fr 1fr 1fr}
+.rev-item-exp{position:relative}
+.rev-exp-note{position:absolute;right:6px;bottom:4px;font-size:8px;
+  color:var(--gray400);font-weight:600;letter-spacing:-.1px}
+.rev-item-cmp{position:relative}
+.rev-cmp-note{position:absolute;left:4px;right:4px;bottom:4px;
+  text-align:center;font-size:9px;font-weight:800;letter-spacing:-.1px}
 .rev-item{background:var(--gray50);border-radius:var(--radius-sm);
   padding:12px;text-align:center;border:var(--border)}
 .rev-lbl{font-size:12px;color:var(--gray500);font-weight:700;margin-bottom:6px;letter-spacing:.2px}
@@ -237,6 +244,21 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Segoe UI",sans-s
 .rev-half-multi .rev-lbl{font-size:12px;margin-bottom:5px}
 .rev-half-multi .rev-val{font-size:15px}
 .rev-half-multi .rev-unit-inline{font-size:10px}
+
+/* EV 매출(당일매출/일평균/예상매출) 박스는 주차 박스와 동일한 글씨 크기로 확대 */
+.rev-half-multi .rev-grid-3 .rev-item{padding:18px 6px;min-height:108px}
+.rev-half-multi .rev-grid-3 .rev-lbl{font-size:14px;margin-bottom:9px}
+.rev-half-multi .rev-grid-3 .rev-val{font-size:19px}
+.rev-half-multi .rev-grid-3 .rev-unit-inline{font-size:12px}
+
+/* 예상매출 박스: 아래쪽에 작은 안내문구가 들어갈 여유 공간 확보 */
+.rev-half .rev-item-exp{padding-bottom:22px}
+.rev-half-multi .rev-item-exp{padding-bottom:20px}
+.rev-half-multi .rev-grid-3 .rev-item-exp{padding-bottom:22px}
+/* 일평균 박스: 예상매출 대비 증감 표기가 들어갈 여유 공간 확보 */
+.rev-half .rev-item-cmp{padding-bottom:22px}
+.rev-half-multi .rev-item-cmp{padding-bottom:20px}
+.rev-half-multi .rev-grid-3 .rev-item-cmp{padding-bottom:22px}
 
 /* 일별 매출 비교 - 소제목을 카테고리 영역에 꽉 차게 크게 */
 .cmp-card-compact .rev-section-label{font-size:15px;font-weight:800;margin-bottom:10px !important;padding-bottom:6px}
@@ -815,28 +837,40 @@ input[type=file]{display:none}
         <div class="card-body rev-body">
           <div class="rev-half">
             <div class="rev-section-label">🅿️ 주차 (VAT별도)</div>
-            <div class="rev-grid">
+            <div class="rev-grid rev-grid-3">
               <div class="rev-item">
                 <div class="rev-lbl">당일 매출</div>
                 <div class="rev-val-line"><span class="rev-val" id="dayParkRev">—</span><span class="rev-unit-inline">백만원</span></div>
               </div>
-              <div class="rev-item">
+              <div class="rev-item rev-item-cmp">
                 <div class="rev-lbl">일 평균</div>
                 <div class="rev-val-line"><span class="rev-val" id="dayParkAvg">—</span><span class="rev-unit-inline">백만원</span></div>
+                <div class="rev-cmp-note" id="parkAvgVsExp">—</div>
+              </div>
+              <div class="rev-item rev-item-exp">
+                <div class="rev-lbl">예상매출</div>
+                <div class="rev-val-line"><span class="rev-val" id="expParkRev">—</span><span class="rev-unit-inline">백만원</span></div>
+                <div class="rev-exp-note">*시너지회의 기준</div>
               </div>
             </div>
           </div>
           <div class="rev-half-multi">
             <div class="rev-section-label">⚡ EV (VAT별도)</div>
             <div class="cmp-subrow-label">매출</div>
-            <div class="rev-grid">
+            <div class="rev-grid rev-grid-3">
               <div class="rev-item">
-                <div class="rev-lbl">당일</div>
+                <div class="rev-lbl">당일매출</div>
                 <div class="rev-val-line"><span class="rev-val" id="dayEvRev">—</span><span class="rev-unit-inline">백만원</span></div>
               </div>
-              <div class="rev-item">
+              <div class="rev-item rev-item-cmp">
                 <div class="rev-lbl">일 평균</div>
                 <div class="rev-val-line"><span class="rev-val" id="dayEvAvg">—</span><span class="rev-unit-inline">백만원</span></div>
+                <div class="rev-cmp-note" id="evAvgVsExp">—</div>
+              </div>
+              <div class="rev-item rev-item-exp">
+                <div class="rev-lbl">예상매출</div>
+                <div class="rev-val-line"><span class="rev-val" id="expEvRev">—</span><span class="rev-unit-inline">백만원</span></div>
+                <div class="rev-exp-note">*시너지회의 기준</div>
               </div>
             </div>
             <div class="cmp-subrow-label">기당충전량</div>
@@ -1178,6 +1212,52 @@ input[type=file]{display:none}
       </div>
     </div>
 
+    <!-- 예상매출 입력 (시너지회의 기준) -->
+    <div class="admin-section">
+      <div class="admin-section-header">🎯 예상매출 입력 (월별, 시너지회의 기준)</div>
+      <div class="admin-section-body">
+        <div class="manual-form">
+          <div>
+            <label>대상 월</label>
+            <select id="expYM" style="padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;font-size:13px;background:white"></select>
+          </div>
+          <div>
+            <label>주차 예상매출 (VAT별도, 백만원)</label>
+            <input type="number" id="expPark" placeholder="예: 230">
+          </div>
+          <div>
+            <label>EV 예상매출 (VAT별도, 백만원)</label>
+            <input type="number" id="expEv" placeholder="예: 90">
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button class="btn-add" onclick="saveExpectedRevenue()">저장</button>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--gray500)">※ 값은 백만원 단위로 입력합니다. 저장 시 일일 매출 현황 카드의 "예상매출" 박스에 표시되며, 박스 우측 하단에 "*시너지회의 기준"이 함께 표기됩니다.</div>
+      </div>
+    </div>
+
+    <!-- 예상매출 목록 -->
+    <div class="admin-section">
+      <div class="admin-section-header">📋 예상매출 입력 내역</div>
+      <div class="admin-section-body" style="padding:0">
+        <table class="manual-list">
+          <thead>
+            <tr>
+              <th>월</th>
+              <th style="text-align:right">주차 예상매출</th>
+              <th style="text-align:right">EV 예상매출</th>
+              <th style="text-align:center">삭제</th>
+            </tr>
+          </thead>
+          <tbody id="expList">
+            <tr><td colspan="4" style="text-align:center;color:var(--gray500);padding:24px">입력된 예상매출이 없습니다</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- 월 조정값 입력 (환불/사후정산/KCP변동) -->
     <div class="admin-section">
       <div class="admin-section-header">💰 월 조정값 입력 (환불 / 사후정산 / 아이파크몰 KCP 변동)</div>
@@ -1185,27 +1265,26 @@ input[type=file]{display:none}
         <div class="manual-form">
           <div>
             <label>대상 월</label>
-            <select id="adjYM" onchange="loadAdjInputs()" style="padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;font-size:13px;background:white"></select>
+            <select id="adjYM" style="padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;font-size:13px;background:white"></select>
           </div>
           <div>
-            <label>환불 (VAT별도, 원 · 양수로 입력 시 자동 차감)</label>
-            <input type="number" id="adjRefund" oninput="updateAdjLivePreview()" placeholder="예: 3000000">
+            <label>환불 (VAT별도, 원)</label>
+            <input type="number" id="adjRefund" placeholder="예: -3000000">
           </div>
           <div>
             <label>사후정산 (VAT별도, 원)</label>
-            <input type="number" id="adjSettle" oninput="updateAdjLivePreview()" placeholder="예: 1500000">
+            <input type="number" id="adjSettle" placeholder="예: 1500000">
           </div>
           <div>
             <label>아이파크몰 KCP 변동 (VAT별도, 원)</label>
-            <input type="number" id="adjKcp" oninput="updateAdjLivePreview()" placeholder="예: -800000">
+            <input type="number" id="adjKcp" placeholder="예: -800000">
           </div>
           <div>
             <label>&nbsp;</label>
             <button class="btn-add" onclick="saveMonthAdj()">저장</button>
           </div>
         </div>
-        <div id="adjLivePreview" style="font-size:12px;color:var(--gray700);margin-top:8px"></div>
-        <div style="font-size:11px;color:var(--gray500);margin-top:4px">※ 대상 월을 선택하면 기존 입력값이 자동으로 채워집니다. 저장 시 그 달의 최종값으로 덮어쓰기되며, 계산식은 <b>사후정산 + KCP변동 − 환불</b>입니다. 해당 월 일수로 균등 분할되어 일별 매출에 자동 반영되고, 저장 즉시 메인 대시보드 숫자도 바뀝니다.</div>
+        <div style="font-size:11px;color:var(--gray500)">※ 입력값은 항상 최신값이 그 달의 최종값으로 저장됩니다 (덮어쓰기). 해당 월 일수로 균등 분할되어 일별로 반영됩니다.</div>
       </div>
     </div>
 
@@ -1528,6 +1607,29 @@ function updateMobility(){
   document.getElementById('dayEvRev').textContent = fmtMil(dayERevAdj)+(manEDay>0?'*':'');
   document.getElementById('dayEvAvg').textContent = fmtMil(eAvgAdj);
 
+  // 예상매출 (관리자 월별 입력값, 단위: 백만원)
+  const curYm=ym(cur.year,cur.month);
+  const expRev=expectedRevenue[curYm];
+  document.getElementById('expParkRev').textContent = (expRev&&expRev.park!=null)?expRev.park.toFixed(1):'—';
+  document.getElementById('expEvRev').textContent = (expRev&&expRev.ev!=null)?expRev.ev.toFixed(1):'—';
+
+  // 일평균 대비 예상매출 증감 표기
+  const setAvgVsExp=(elId,avgMil,expVal)=>{
+    const el=document.getElementById(elId);
+    if(!el)return;
+    if(expVal==null||!isFinite(expVal)||expVal===0){
+      el.textContent='—';
+      el.style.color='var(--gray400)';
+      return;
+    }
+    const diff=((avgMil-expVal)/expVal)*100;
+    const up=diff>=0;
+    el.textContent=(up?'▲':'▼')+Math.abs(diff).toFixed(1)+'% vs예상';
+    el.style.color=up?'var(--green)':'var(--red)';
+  };
+  setAvgVsExp('parkAvgVsExp', pAvgAdj/1000000, expRev?expRev.park:null);
+  setAvgVsExp('evAvgVsExp', eAvgAdj/1000000, expRev?expRev.ev:null);
+
   // 기당 충전량 (당일 / 기간 평균)
   const dayPerDevChg = eDay && eDay.devices ? eDay.charging/eDay.devices : null;
   const eAllWithDev = eAll.filter(d=>d.devices);
@@ -1663,18 +1765,6 @@ function updateMobility(){
   const totChTxt=totCh===null?'—':`${totCh>=0?'▲':'▼'}${Math.abs(totCh).toFixed(1)}%`;
   const totAmtSign=totAmt!=null?(totAmt>=0?'+':''):'';
   const totAmtTxt=totAmt===null?'—':`${totAmtSign}${fmtK(totAmt)}`;
-
-  // 합계 행에 당일 배분된 조정값(사후정산+KCP-환불) 반영
-  const adjKeyYM=ym(cur.year,cur.month);
-  const adjInfo=monthAdj[adjKeyYM];
-  const adjRefundD=Math.abs(adjInfo?.refund||0);
-  const adjSettleD=adjInfo?.settle||0;
-  const adjKcpD=adjInfo?.kcp||0;
-  const adjTotalExclD=adjSettleD+adjKcpD-adjRefundD;
-  const adjDailyExclD=(adjInfo&&md.parking.length)?adjTotalExclD/md.parking.length:0;
-  const typeTotalDisplay=vex(typeTotal)+adjDailyExclD;
-  const adjNoteHtml=(adjInfo&&adjTotalExclD!==0)?'<div style="text-align:right;font-size:10px;color:var(--gray400);margin-top:4px">* 사후정산, 환불 포함</div>':'';
-
   const typeHtml=`<table class="type-table">
     <thead class="type-thead">
       <tr>
@@ -1687,12 +1777,12 @@ function updateMobility(){
     <tbody>${typeRows}
       <tr class="type-row total-row">
         <td class="type-name">합계</td>
-        <td class="type-rev">${fmtK(typeTotalDisplay)}</td>
+        <td class="type-rev">${fmtK(vex(typeTotal))}</td>
         <td class="type-change ${totCls}">${totChTxt}</td>
         <td class="type-change-amt ${totCls}">${totAmtTxt}</td>
       </tr>
     </tbody>
-  </table>${adjNoteHtml}`;
+  </table>`;
   document.getElementById('typeBody').innerHTML=typeHtml;
   
   // ===== 전주대비 특이사항 (내장 데이터 즉시 표시, RAW 업로드 시 개별 주차장으로 전환) =====
@@ -2093,9 +2183,10 @@ async function fbLoadAll(){
     if(msSnap.exists){ manualData = msSnap.data().data||[]; manualOn = !!msSnap.data().on; }
     const maSnap = await fbDb.collection('meta').doc('monthAdj').get();
     if(maSnap.exists){ monthAdj = maSnap.data().data||{}; }
+    const erSnap = await fbDb.collection('meta').doc('expectedRevenue').get();
+    if(erSnap.exists){ expectedRevenue = erSnap.data().data||{}; }
     const memSnap = await fbDb.collection('meta').doc('memos').get();
     if(memSnap.exists){ pkMemos2 = memSnap.data().data||[]; }
-    applyAllMonthAdj(); // 서버에서 불러온 월별 데이터에 조정값(환불/사후정산/KCP) 일괄 반영
   }catch(e){
     console.error('Firestore 불러오기 실패, 내장 데이터로 표시합니다:', e);
   }
@@ -2130,6 +2221,11 @@ async function fbSaveMonthAdjData(){
   if(!fbReady || !fbDb) return;
   try{ await fbDb.collection('meta').doc('monthAdj').set({data: monthAdj}); }
   catch(e){ console.error('조정값 저장 실패:', e); alert('⚠️ 서버 저장 실패: '+e.message); }
+}
+async function fbSaveExpectedRevenue(){
+  if(!fbReady || !fbDb) return;
+  try{ await fbDb.collection('meta').doc('expectedRevenue').set({data: expectedRevenue}); }
+  catch(e){ console.error('예상매출 저장 실패:', e); alert('⚠️ 서버 저장 실패: '+e.message); }
 }
 async function fbSaveMemos(){
   if(!fbReady || !fbDb) return;
@@ -2244,22 +2340,19 @@ function processParkingRaw(file){
       });
 
       recomputeMonthRange();
+      annualDrawn=false;
+      updateMobility();
 
       let cloudMsg='';
       if(fbReady && fbAuth && fbAuth.currentUser){
         for(const ym of affectedMonths){
-          await fbSaveMonth(ym); // 조정값 반영 전 원본 상태로 서버에 저장
+          await fbSaveMonth(ym);
           if(uploadedLots[ym]) await fbSaveLots(ym);
         }
         cloudMsg='\n☁️ 서버에 저장되어 링크를 보는 모두에게 반영됩니다.';
       } else {
         cloudMsg='\n⚠️ 관리자로 로그인되어 있지 않아 이 브라우저에만 반영되었습니다. 서버에 반영하려면 관리자 로그인 후 다시 업로드하세요.';
       }
-
-      // 새로 올라온 원본에 대해 기존 월 조정값(환불/사후정산/KCP)을 다시 반영
-      affectedMonths.forEach(ym=>{ snapshotRawParking(ym); applyMonthAdjToData(ym); });
-      annualDrawn=false;
-      updateMobility();
       const logMsg=sheetLog.length?'\n\n처리 실패:\n'+sheetLog.slice(0,5).join('\n'):'';
       alert(`✅ 주차 RAW 업로드 완료!\n처리 시트: ${sheetCount}개\n대형/대학교 주차장: ${lotCount}개 추출${cloudMsg}${logMsg}`);
     }catch(err){
@@ -2444,38 +2537,8 @@ function saveAdminData(){
 // 월 조정값 (환불 / 사후정산 / 아이파크몰 KCP 변동)
 // 최신 입력값 = 그 달의 최종값 (덮어쓰기), 해당 월 일수로 균등 분할하여 일별 반영
 // ═══════════════════════════════════════════
-let monthAdj = {}; // {ym: {refund, settle, kcp}} · refund는 항상 "양수(차감할 금액)"로 저장, 계산식 = settle + kcp - refund
-
-// ── 조정값을 원본 일별 매출에 반영하기 위한 원본 백업 ─────────────────────
-// ALL_DATA[ym].parking[i].revenue 는 화면에는 "조정 반영된" 값이 담기고,
-// RAW_PARKING_REV[ym] 에는 조정 반영 전 "원본"이 항상 보존된다.
-// 조정값이 바뀌어도 항상 이 원본을 기준으로 다시 계산하므로 중복 반영되지 않는다.
-let RAW_PARKING_REV = {}; // {ym: [day0Revenue, day1Revenue, ...]}
-
-function snapshotRawParking(ym){
-  if(!ALL_DATA[ym]) return;
-  RAW_PARKING_REV[ym] = ALL_DATA[ym].parking.map(d=>d.revenue);
-}
-
-// 월 조정값(VAT별도 입력값)을 해당 월 일수로 균등 분할해 일별 매출(VAT포함 원본 단위)에 반영
-function applyMonthAdjToData(ym){
-  if(!ALL_DATA[ym]) return;
-  if(!RAW_PARKING_REV[ym]) snapshotRawParking(ym); // 최초 1회만 원본 백업
-  const raw=RAW_PARKING_REV[ym];
-  const a=monthAdj[ym];
-  const refund=Math.abs(a?.refund||0);
-  const settle=a?.settle||0;
-  const kcp=a?.kcp||0;
-  const adjTotalExcl=settle+kcp-refund; // VAT별도 금액 (사후정산 + KCP변동 - 환불)
-  const days=raw.length;
-  const dailyExcl=days?adjTotalExcl/days:0;
-  const dailyIncl=dailyExcl*V; // 원본 데이터는 VAT포함 기준이므로 환산해서 더함
-  ALL_DATA[ym].parking.forEach((d,i)=>{ d.revenue=raw[i]+dailyIncl; });
-}
-// 로드된 전체 월에 대해 일괄 반영 (초기 로드 시 사용)
-function applyAllMonthAdj(){
-  Object.keys(ALL_DATA).forEach(ym=>applyMonthAdjToData(ym));
-}
+let monthAdj = {}; // {ym: {refund, settle, kcp}}
+let expectedRevenue = {}; // {ym: {park, ev}} 단위: 백만원 (관리자 입력, 시너지회의 기준)
 
 function loadMonthAdj(){
   // 데이터는 fbLoadAll()에서 이미 로드됨 - 별도 동작 없음
@@ -2483,78 +2546,31 @@ function loadMonthAdj(){
 function saveMonthAdjData(){
   fbSaveMonthAdjData();
 }
-// 아직 실적 데이터가 없는 월을 빈 껍데기로 미리 만들어둠 (조정값을 먼저 입력할 수 있도록)
-function ensureMonthDataExists(ym){
-  if(ALL_DATA[ym]) return;
-  const parts=ym.split('-');
-  const y=parseInt(parts[0]), m=parseInt(parts[1]);
-  const daysInMonth=new Date(y, m, 0).getDate();
-  const DOW=['일','월','화','수','목','금','토'];
-  ALL_DATA[ym]={
-    parking:Array.from({length:daysInMonth},(_,i)=>{
-      const dt=new Date(y,m-1,i+1);
-      return{date:`${String(m).padStart(2,'0')}-${String(i+1).padStart(2,'0')}`,day:DOW[dt.getDay()],revenue:0};
-    }),
-    parkingByType:Object.fromEntries(CONTRACT_TYPES.map(ct=>[ct,Array(daysInMonth).fill(0)])),
-    ev:[]
-  };
-  if(!MONTHS_ORDER.includes(ym)){MONTHS_ORDER.push(ym);MONTHS_ORDER.sort();}
-}
-// 시스템 날짜 기준 이번 달이 아직 없으면 자동 생성 (예: 8월 말 이용 중 9월이 되면 9월이 자동으로 목록에 뜨도록)
-function ensureCurrentMonthExists(){
-  const today=new Date();
-  ensureMonthDataExists(ym(today.getFullYear(), today.getMonth()+1));
-}
 function populateAdjYM(){
-  ensureCurrentMonthExists(); // 이번 달 데이터가 없으면 빈 상태로 자동 추가
   const sel=document.getElementById('adjYM');
   if(!sel)return;
   sel.innerHTML=MONTHS_ORDER.slice().reverse().map(ym=>`<option value="${ym}">${ym}</option>`).join('');
   sel.value=pkGetYM2?pkGetYM2():MONTHS_ORDER[MONTHS_ORDER.length-1];
-  loadAdjInputs();
-}
-// 대상 월 선택 시 기존 저장값을 입력창에 자동으로 채움 (없으면 비움)
-function loadAdjInputs(){
-  const ym=document.getElementById('adjYM')?.value;
-  const a=(ym&&monthAdj[ym])?monthAdj[ym]:null;
-  document.getElementById('adjRefund').value=a&&a.refund?Math.abs(a.refund):'';
-  document.getElementById('adjSettle').value=a&&a.settle?a.settle:'';
-  document.getElementById('adjKcp').value=a&&a.kcp?a.kcp:'';
-  updateAdjLivePreview();
-}
-function updateAdjLivePreview(){
-  const el=document.getElementById('adjLivePreview');
-  if(!el)return;
-  const refund=Math.abs(parseFloat(document.getElementById('adjRefund').value)||0);
-  const settle=parseFloat(document.getElementById('adjSettle').value)||0;
-  const kcp=parseFloat(document.getElementById('adjKcp').value)||0;
-  const tot=settle+kcp-refund;
-  el.innerHTML='계산식: 사후정산('+fmtK(settle)+') + KCP변동('+fmtK(kcp)+') − 환불('+fmtK(refund)+') = <b style="color:'+(tot>=0?'#059669':'#dc2626')+'">'+(tot>=0?'+':'')+fmtK(tot)+'</b> (VAT별도, 월 총 조정액)';
 }
 function saveMonthAdj(){
   const ym=document.getElementById('adjYM').value;
-  const refund=Math.abs(parseFloat(document.getElementById('adjRefund').value)||0);
+  const refund=parseFloat(document.getElementById('adjRefund').value)||0;
   const settle=parseFloat(document.getElementById('adjSettle').value)||0;
   const kcp=parseFloat(document.getElementById('adjKcp').value)||0;
   if(!ym)return;
   monthAdj[ym]={refund,settle,kcp};
   saveMonthAdjData();
   renderAdjList();
-  applyMonthAdjToData(ym);     // 대시보드용 일별 매출 재계산
-  annualDrawn=false;
-  updateMobility();            // 메인 대시보드 즉시 갱신
-  if(typeof pkUpdate==='function') pkUpdate(); // 주차 탭도 함께 갱신
-  alert('✅ '+ym+' 조정값이 저장되었고 대시보드에 반영되었습니다.');
+  document.getElementById('adjRefund').value='';
+  document.getElementById('adjSettle').value='';
+  document.getElementById('adjKcp').value='';
+  if(typeof pkUpdate==='function' && document.getElementById('parking')?.classList.contains('active')) pkUpdate();
 }
 function deleteMonthAdj(ym){
   delete monthAdj[ym];
   saveMonthAdjData();
   renderAdjList();
-  applyMonthAdjToData(ym);     // 조정값 삭제 → 원본으로 복원
-  annualDrawn=false;
-  updateMobility();
-  if(typeof pkUpdate==='function') pkUpdate();
-  loadAdjInputs();
+  if(typeof pkUpdate==='function' && document.getElementById('parking')?.classList.contains('active')) pkUpdate();
 }
 function renderAdjList(){
   const tbody=document.getElementById('adjList');
@@ -2566,16 +2582,13 @@ function renderAdjList(){
   }
   tbody.innerHTML=yms.map(ym=>{
     const a=monthAdj[ym];
-    const refund=Math.abs(a.refund||0);
-    const settle=a.settle||0;
-    const kcp=a.kcp||0;
-    const tot=settle+kcp-refund;
+    const tot=(a.refund||0)+(a.settle||0)+(a.kcp||0);
     return '<tr>'+
       '<td>'+ym+'</td>'+
-      '<td style="text-align:right">-'+fmtK(refund)+'</td>'+
-      '<td style="text-align:right">'+(settle>=0?'+':'')+fmtK(settle)+'</td>'+
-      '<td style="text-align:right">'+(kcp>=0?'+':'')+fmtK(kcp)+'</td>'+
-      '<td style="text-align:right;font-weight:700">'+(tot>=0?'+':'')+fmtK(tot)+'</td>'+
+      '<td style="text-align:right">'+fmtK(a.refund||0)+'</td>'+
+      '<td style="text-align:right">'+fmtK(a.settle||0)+'</td>'+
+      '<td style="text-align:right">'+fmtK(a.kcp||0)+'</td>'+
+      '<td style="text-align:right;font-weight:700">'+fmtK(tot)+'</td>'+
       '<td style="text-align:center"><button onclick="deleteMonthAdj(\''+ym+'\')" style="color:#dc2626;background:none;border:none;cursor:pointer;font-size:13px">삭제</button></td>'+
       '</tr>';
   }).join('');
@@ -2583,6 +2596,58 @@ function renderAdjList(){
 function daysInMonthOf(ym){
   const parts=ym.split('-');
   return new Date(parseInt(parts[0]), parseInt(parts[1]), 0).getDate();
+}
+
+// ═══════════════════════════════════════════
+// 예상매출 (월별, 시너지회의 기준) - 관리자 입력
+// ═══════════════════════════════════════════
+function populateExpYM(){
+  const sel=document.getElementById('expYM');
+  if(!sel)return;
+  sel.innerHTML=MONTHS_ORDER.slice().reverse().map(ym=>`<option value="${ym}">${ym}</option>`).join('');
+  sel.value=pkGetYM2?pkGetYM2():MONTHS_ORDER[MONTHS_ORDER.length-1];
+}
+function saveExpectedRevenue(){
+  const ym=document.getElementById('expYM').value;
+  if(!ym)return;
+  const parkInput=document.getElementById('expPark').value;
+  const evInput=document.getElementById('expEv').value;
+  const prev=expectedRevenue[ym]||{};
+  const park=parkInput===''?prev.park:parseFloat(parkInput);
+  const ev=evInput===''?prev.ev:parseFloat(evInput);
+  expectedRevenue[ym]={
+    park: isNaN(park)?null:park,
+    ev: isNaN(ev)?null:ev
+  };
+  fbSaveExpectedRevenue();
+  renderExpList();
+  document.getElementById('expPark').value='';
+  document.getElementById('expEv').value='';
+  updateMobility();
+}
+function deleteExpectedRevenue(ym){
+  delete expectedRevenue[ym];
+  fbSaveExpectedRevenue();
+  renderExpList();
+  updateMobility();
+}
+function renderExpList(){
+  const tbody=document.getElementById('expList');
+  if(!tbody)return;
+  const yms=Object.keys(expectedRevenue).sort().reverse();
+  if(!yms.length){
+    tbody.innerHTML='<tr><td colspan="4" style="text-align:center;color:var(--gray500);padding:24px">입력된 예상매출이 없습니다</td></tr>';
+    return;
+  }
+  tbody.innerHTML=yms.map(ym=>{
+    const e=expectedRevenue[ym]||{};
+    return '<tr>'+
+      '<td>'+ym+'</td>'+
+      '<td style="text-align:right">'+(e.park!=null?e.park.toFixed(1)+' 백만원':'-')+'</td>'+
+      '<td style="text-align:right">'+(e.ev!=null?e.ev.toFixed(1)+' 백만원':'-')+'</td>'+
+      '<td style="text-align:center"><button onclick="deleteExpectedRevenue(\''+ym+'\')" style="color:#dc2626;background:none;border:none;cursor:pointer;font-size:13px">삭제</button></td>'+
+      '</tr>';
+  }).join('');
 }
 function pkRenderAdjustments(ym, baseTotal){
   const el=document.getElementById('pkAdjBody');
@@ -2593,9 +2658,8 @@ function pkRenderAdjustments(ym, baseTotal){
     return;
   }
   const days=daysInMonthOf(ym);
-  const refund=Math.abs(a.refund||0);
   const items=[
-    {label:'환불', val:-refund},
+    {label:'환불', val:a.refund||0},
     {label:'사후정산', val:a.settle||0},
     {label:'아이파크몰 KCP 변동', val:a.kcp||0}
   ];
@@ -2613,7 +2677,7 @@ function pkRenderAdjustments(ym, baseTotal){
   });
   html+='</div>';
   html+='<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:#eff6ff;border-radius:10px;border:1px solid #bfdbfe">'+
-    '<span style="font-size:13px;font-weight:700;color:#1e293b">조정 총액 (사후정산 + KCP변동 - 환불)</span>'+
+    '<span style="font-size:13px;font-weight:700;color:#1e293b">조정 총액</span>'+
     '<span style="font-size:16px;font-weight:800;color:'+(adjTotal>=0?'#059669':'#dc2626')+'">'+(adjTotal>=0?'+':'')+fmtK(adjTotal)+'</span>'+
     '</div>'+
     '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;margin-top:8px;background:#0f1b2d;border-radius:10px">'+
@@ -2642,27 +2706,43 @@ function openAdmin(btn){
     setTimeout(()=>document.getElementById('pwInput').focus(),100);
   }
 }
-// 관리자 비밀번호 (필요 시 이 값만 바꾸면 됩니다)
-const ADMIN_PW = '0000';
-function checkPw(){
+async function checkPw(){
+  const email=document.getElementById('pwEmail').value.trim();
   const pw=document.getElementById('pwInput').value;
-  if(pw===ADMIN_PW){
+  const btn=document.querySelector('.pw-btn');
+  if(!fbReady || !fbAuth){
+    alert('⚠️ Firebase 설정이 완료되지 않았습니다 (firebaseConfig 값을 확인하세요).');
+    return;
+  }
+  if(!email){
+    const inp=document.getElementById('pwEmail');
+    inp.classList.add('error');
+    setTimeout(()=>inp.classList.remove('error'),400);
+    return;
+  }
+  if(btn){ btn.disabled=true; btn.textContent='확인 중...'; }
+  try{
+    await fbAuth.signInWithEmailAndPassword(email, pw);
     adminUnlocked=true;
     const m=document.getElementById('pwModal');
     m.classList.remove('show');
     m.style.cssText='';
     document.getElementById('pwInput').value='';
+    document.getElementById('pwEmail').value='';
     // 탭 전환
     document.querySelectorAll('.tab-content').forEach(e=>e.classList.remove('active'));
     document.querySelectorAll('.tab').forEach(e=>e.classList.remove('active'));
     document.getElementById('admin').classList.add('active');
     if(window._adminBtn)window._adminBtn.classList.add('active');
     renderManualList();
-  }else{
+  }catch(e){
+    console.error('로그인 실패:', e);
     const inp=document.getElementById('pwInput');
     inp.classList.add('error');
     inp.value='';
     setTimeout(()=>inp.classList.remove('error'),400);
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent='확인'; }
   }
 }
 function closePwModal(){
@@ -2671,7 +2751,6 @@ function closePwModal(){
   modal.style.cssText='';
   document.getElementById('pwInput').value='';
 }
-
 
 // 수기매출 추가
 function addManual(){
@@ -2881,7 +2960,8 @@ window.addEventListener('load',async()=>{
   loadMonthAdj();
   populateAdjYM();
   renderAdjList();
-  applyAllMonthAdj(); // Firebase 미설정 등으로 위에서 반영되지 않았을 경우를 위한 안전망
+  populateExpYM();
+  renderExpList();
   // 오늘 날짜를 수기입력 기본값으로
   const today=new Date();
   const ymd=today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');
@@ -3222,7 +3302,9 @@ function exportExcel(){
   <div class="modal-box">
     <div style="font-size:36px;margin-bottom:12px">🔐</div>
     <h3>관리자 인증</h3>
-    <p>관리 페이지 접근을 위해<br>비밀번호를 입력해주세요</p>
+    <p>관리 페이지 접근을 위해<br>이메일과 비밀번호를 입력해주세요</p>
+    <input type="email" class="pw-input" id="pwEmail" placeholder="관리자 이메일" maxlength="60"
+      style="margin-bottom:8px" onkeydown="if(event.key==='Enter')document.getElementById('pwInput').focus()">
     <input type="password" class="pw-input" id="pwInput" placeholder="••••" maxlength="30"
       onkeydown="if(event.key==='Enter')checkPw()">
     <button class="pw-btn" onclick="checkPw()">확인</button>
