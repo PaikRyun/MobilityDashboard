@@ -46,6 +46,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Segoe UI",sans-s
   padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;
   letter-spacing:.8px;border:1px solid rgba(255,255,255,.2)}
 .topbar-right{display:flex;align-items:center;gap:6px}
+#adminStatusBadge{display:inline-flex;align-items:center;gap:8px;
+  background:rgba(16,185,129,.18);border:1px solid rgba(16,185,129,.4);
+  color:#d1fae5;font-size:12px;font-weight:600;padding:5px 12px;
+  border-radius:20px;margin-left:14px;white-space:nowrap}
+#adminStatusBadge .logout-link{color:#d1fae5;text-decoration:underline;
+  cursor:pointer;font-size:11px;font-weight:700;background:none;border:none;padding:0}
 .btn-icon{padding:6px 14px;background:rgba(255,255,255,.08);
   border:1px solid rgba(255,255,255,.15);color:white;border-radius:20px;
   cursor:pointer;font-size:12px;font-weight:600;transition:.2s;
@@ -698,6 +704,7 @@ input[type=file]{display:none}
   <div class="topbar-brand">
     📊 <span>NICE인프라</span> 모빌리티 대시보드
   </div>
+  <span id="adminStatusBadge" style="display:none"></span>
   <div class="topbar-right">
     <button class="btn-icon" onclick="printDashboard()" style="background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.3)" title="현재 화면 인쇄/PDF 저장">🖨️ 인쇄</button>
     <button class="btn-icon green" onclick="downloadData()">💾 백업</button>
@@ -1347,6 +1354,41 @@ try{
   fbReady = true;
 }catch(e){
   console.error('Firebase 초기화 실패 (firebaseConfig 값을 확인하세요):', e);
+}
+
+// ═══════════════════════════════════════════
+// 관리자 로그인 상태 실시간 표시 (상단바 배지)
+// - Firebase 세션이 실제 기준(true source). 새로고침해도 로그인 상태가 살아있으면 자동 반영됨.
+// ═══════════════════════════════════════════
+function updateAdminBadge(user){
+  const badge=document.getElementById('adminStatusBadge');
+  if(!badge)return;
+  if(user){
+    // 실제 이메일 대신, 매핑된 관리자 ID가 있으면 그걸로 표시 (사용자 경험 일관성)
+    const idKey=Object.keys(ADMIN_ID_MAP||{}).find(k=>ADMIN_ID_MAP[k]===user.email);
+    const displayName=idKey||user.email;
+    badge.style.display='inline-flex';
+    badge.innerHTML='🟢 관리자 로그인됨 · '+displayName+
+      ' <button class="logout-link" onclick="adminLogout()">로그아웃</button>';
+  } else {
+    badge.style.display='none';
+    badge.innerHTML='';
+  }
+}
+function adminLogout(){
+  if(fbAuth) fbAuth.signOut();
+  adminUnlocked=false;
+  // 로그아웃 시 '관리' 탭이 열려있으면 첫 탭으로 이동
+  if(document.getElementById('admin')?.classList.contains('active')){
+    const firstTab=document.querySelector('.tab');
+    if(firstTab) firstTab.click();
+  }
+}
+if(fbReady && fbAuth){
+  fbAuth.onAuthStateChanged(function(user){
+    adminUnlocked=!!user;
+    updateAdminBadge(user);
+  });
 }
 
 // ===== DATA =====
@@ -2730,18 +2772,38 @@ function openAdmin(btn){
     setTimeout(()=>document.getElementById('pwInput').focus(),100);
   }
 }
+// ═══════════════════════════════════════════
+// 관리자 ID → 실제 Firebase 이메일 매핑
+// (사용자는 간단한 ID만 기억하면 되고, 내부적으로는 여전히 Firebase Authentication으로
+//  인증되므로 Firestore 쓰기 보안(firestore.rules)이 그대로 유지됩니다)
+// ═══════════════════════════════════════════
+const ADMIN_ID_MAP = {
+  'admin': 'hj.kim@niceinfra.co.kr',
+  'nice': 'bjl9525@gmail.com'
+  // 관리자를 더 추가하려면 여기에 'id':'실제이메일' 형태로 추가하고,
+  // 해당 이메일을 Firebase Authentication(사용자 추가)과 Firestore Rules 허용목록에도 등록하세요.
+};
 async function checkPw(){
-  const email=document.getElementById('pwEmail').value.trim();
+  const idRaw=document.getElementById('pwEmail').value.trim();
   const pw=document.getElementById('pwInput').value;
   const btn=document.querySelector('.pw-btn');
   if(!fbReady || !fbAuth){
     alert('⚠️ Firebase 설정이 완료되지 않았습니다 (firebaseConfig 값을 확인하세요).');
     return;
   }
+  if(!idRaw){
+    const inp=document.getElementById('pwEmail');
+    inp.classList.add('error');
+    setTimeout(()=>inp.classList.remove('error'),400);
+    return;
+  }
+  // 등록된 관리자 ID인지 확인 → 실제 Firebase 이메일로 변환
+  const email = ADMIN_ID_MAP[idRaw.toLowerCase()] || (idRaw.includes('@') ? idRaw : null);
   if(!email){
     const inp=document.getElementById('pwEmail');
     inp.classList.add('error');
     setTimeout(()=>inp.classList.remove('error'),400);
+    alert('⚠️ 등록되지 않은 관리자 ID입니다.');
     return;
   }
   if(btn){ btn.disabled=true; btn.textContent='확인 중...'; }
@@ -3326,10 +3388,10 @@ function exportExcel(){
   <div class="modal-box">
     <div style="font-size:36px;margin-bottom:12px">🔐</div>
     <h3>관리자 인증</h3>
-    <p>관리 페이지 접근을 위해<br>이메일과 비밀번호를 입력해주세요</p>
-    <input type="email" class="pw-input" id="pwEmail" placeholder="관리자 이메일" maxlength="60"
+    <p>관리 페이지 접근을 위해<br>ID와 비밀번호를 입력해주세요</p>
+    <input type="text" class="pw-input" id="pwEmail" placeholder="관리자 ID" maxlength="60" autocomplete="username"
       style="margin-bottom:8px" onkeydown="if(event.key==='Enter')document.getElementById('pwInput').focus()">
-    <input type="password" class="pw-input" id="pwInput" placeholder="••••" maxlength="30"
+    <input type="password" class="pw-input" id="pwInput" placeholder="••••" maxlength="30" autocomplete="current-password"
       onkeydown="if(event.key==='Enter')checkPw()">
     <button class="pw-btn" onclick="checkPw()">확인</button>
     <span class="pw-cancel" onclick="closePwModal()">취소</span>
