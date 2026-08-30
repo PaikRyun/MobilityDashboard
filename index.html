@@ -202,8 +202,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Segoe UI",sans-s
 .rev-exp-note{position:absolute;right:6px;bottom:4px;font-size:8px;
   color:var(--gray400);font-weight:600;letter-spacing:-.1px}
 .rev-item-cmp{position:relative}
-.rev-cmp-note{position:absolute;left:4px;right:4px;bottom:4px;
-  text-align:center;font-size:9px;font-weight:800;letter-spacing:-.1px}
+.rev-cmp-note{position:absolute;left:4px;right:4px;bottom:3px;
+  text-align:center;line-height:1.25}
+.rev-cmp-pct{font-size:12px;font-weight:800;letter-spacing:-.1px}
+.rev-cmp-label{font-size:9px;color:var(--gray400);font-weight:600;margin-top:1px}
 .rev-item{background:var(--gray50);border-radius:var(--radius-sm);
   padding:12px;text-align:center;border:var(--border)}
 .rev-lbl{font-size:12px;color:var(--gray500);font-weight:700;margin-bottom:6px;letter-spacing:.2px}
@@ -256,9 +258,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Segoe UI",sans-s
 .rev-half-multi .rev-item-exp{padding-bottom:20px}
 .rev-half-multi .rev-grid-3 .rev-item-exp{padding-bottom:22px}
 /* 일평균 박스: 예상매출 대비 증감 표기가 들어갈 여유 공간 확보 */
-.rev-half .rev-item-cmp{padding-bottom:22px}
-.rev-half-multi .rev-item-cmp{padding-bottom:20px}
-.rev-half-multi .rev-grid-3 .rev-item-cmp{padding-bottom:22px}
+.rev-half .rev-item-cmp{padding-bottom:28px}
+.rev-half-multi .rev-item-cmp{padding-bottom:26px}
+.rev-half-multi .rev-grid-3 .rev-item-cmp{padding-bottom:28px}
 
 /* 일별 매출 비교 - 소제목을 카테고리 영역에 꽉 차게 크게 */
 .cmp-card-compact .rev-section-label{font-size:15px;font-weight:800;margin-bottom:10px !important;padding-bottom:6px}
@@ -845,7 +847,10 @@ input[type=file]{display:none}
               <div class="rev-item rev-item-cmp">
                 <div class="rev-lbl">일 평균</div>
                 <div class="rev-val-line"><span class="rev-val" id="dayParkAvg">—</span><span class="rev-unit-inline">백만원</span></div>
-                <div class="rev-cmp-note" id="parkAvgVsExp">—</div>
+                <div class="rev-cmp-note">
+                  <div class="rev-cmp-pct" id="parkAvgVsExp">—</div>
+                  <div class="rev-cmp-label">예상대비 증감율</div>
+                </div>
               </div>
               <div class="rev-item rev-item-exp">
                 <div class="rev-lbl">예상매출</div>
@@ -865,7 +870,10 @@ input[type=file]{display:none}
               <div class="rev-item rev-item-cmp">
                 <div class="rev-lbl">일 평균</div>
                 <div class="rev-val-line"><span class="rev-val" id="dayEvAvg">—</span><span class="rev-unit-inline">백만원</span></div>
-                <div class="rev-cmp-note" id="evAvgVsExp">—</div>
+                <div class="rev-cmp-note">
+                  <div class="rev-cmp-pct" id="evAvgVsExp">—</div>
+                  <div class="rev-cmp-label">예상대비 증감율</div>
+                </div>
               </div>
               <div class="rev-item rev-item-exp">
                 <div class="rev-lbl">예상매출</div>
@@ -1231,7 +1239,7 @@ input[type=file]{display:none}
           </div>
           <div>
             <label>&nbsp;</label>
-            <button class="btn-add" onclick="saveExpectedRevenue()">저장</button>
+            <button class="btn-add" onclick="saveExpectedRevenue(this)">저장</button>
           </div>
         </div>
         <div style="font-size:11px;color:var(--gray500)">※ 값은 백만원 단위로 입력합니다. 저장 시 일일 매출 현황 카드의 "예상매출" 박스에 표시되며, 박스 우측 하단에 "*시너지회의 기준"이 함께 표기됩니다.</div>
@@ -1624,7 +1632,7 @@ function updateMobility(){
     }
     const diff=((avgMil-expVal)/expVal)*100;
     const up=diff>=0;
-    el.textContent=(up?'▲':'▼')+Math.abs(diff).toFixed(1)+'% vs예상';
+    el.textContent=(up?'▲':'▼')+Math.abs(diff).toFixed(1)+'%';
     el.style.color=up?'var(--green)':'var(--red)';
   };
   setAvgVsExp('parkAvgVsExp', pAvgAdj/1000000, expRev?expRev.park:null);
@@ -2223,9 +2231,15 @@ async function fbSaveMonthAdjData(){
   catch(e){ console.error('조정값 저장 실패:', e); alert('⚠️ 서버 저장 실패: '+e.message); }
 }
 async function fbSaveExpectedRevenue(){
-  if(!fbReady || !fbDb) return;
-  try{ await fbDb.collection('meta').doc('expectedRevenue').set({data: expectedRevenue}); }
-  catch(e){ console.error('예상매출 저장 실패:', e); alert('⚠️ 서버 저장 실패: '+e.message); }
+  if(!fbReady || !fbDb) return false;
+  try{
+    await fbDb.collection('meta').doc('expectedRevenue').set({data: expectedRevenue});
+    return true;
+  }catch(e){
+    console.error('예상매출 저장 실패:', e);
+    alert('⚠️ 서버 저장 실패: '+e.message);
+    return false;
+  }
 }
 async function fbSaveMemos(){
   if(!fbReady || !fbDb) return;
@@ -2607,7 +2621,7 @@ function populateExpYM(){
   sel.innerHTML=MONTHS_ORDER.slice().reverse().map(ym=>`<option value="${ym}">${ym}</option>`).join('');
   sel.value=pkGetYM2?pkGetYM2():MONTHS_ORDER[MONTHS_ORDER.length-1];
 }
-function saveExpectedRevenue(){
+async function saveExpectedRevenue(btn){
   const ym=document.getElementById('expYM').value;
   if(!ym)return;
   const parkInput=document.getElementById('expPark').value;
@@ -2615,15 +2629,25 @@ function saveExpectedRevenue(){
   const prev=expectedRevenue[ym]||{};
   const park=parkInput===''?prev.park:parseFloat(parkInput);
   const ev=evInput===''?prev.ev:parseFloat(evInput);
+  const backup=expectedRevenue[ym]; // 저장 실패 시 복구용
   expectedRevenue[ym]={
     park: isNaN(park)?null:park,
     ev: isNaN(ev)?null:ev
   };
-  fbSaveExpectedRevenue();
+  if(btn){ btn.disabled=true; btn.textContent='저장 중...'; }
+  const ok=await fbSaveExpectedRevenue();
+  if(btn){ btn.disabled=false; btn.textContent='저장'; }
+  if(!ok){
+    // 서버 저장 실패 → 화면에 잘못된 값이 남지 않도록 원래 상태로 되돌림
+    if(backup===undefined) delete expectedRevenue[ym];
+    else expectedRevenue[ym]=backup;
+    return;
+  }
   renderExpList();
   document.getElementById('expPark').value='';
   document.getElementById('expEv').value='';
   updateMobility();
+  alert('✅ 예상매출이 저장되었습니다.');
 }
 function deleteExpectedRevenue(ym){
   delete expectedRevenue[ym];
