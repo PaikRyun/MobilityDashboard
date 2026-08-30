@@ -7,6 +7,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js">
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
@@ -99,7 +100,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Segoe UI",sans-s
   background:white;border-radius:14px;
   box-shadow:0 12px 40px rgba(0,0,0,.15),0 4px 12px rgba(0,0,0,.08);
   border:1px solid var(--gray200);z-index:500;
-  width:220px;overflow:hidden;padding:8px}
+  width:240px;overflow:hidden;padding:8px}
 .raw-popup.open{display:block}
 .raw-popup-header{padding:8px 10px 10px;font-size:12px;font-weight:700;
   color:var(--gray500);text-transform:uppercase;letter-spacing:.3px;
@@ -111,6 +112,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Segoe UI",sans-s
 .raw-popup-btn:hover{filter:brightness(.96)}
 .raw-popup-btn.ev{background:rgba(16,185,129,.12);color:#059669}
 .raw-popup-btn:last-child{margin-bottom:0}
+.raw-popup-divider{height:1px;background:var(--gray100);margin:4px 2px 8px}
+.raw-popup-btn.tmpl{background:var(--gray50);color:var(--gray600);
+  font-size:12px;font-weight:600;padding:8px 12px}
+.raw-popup-btn.tmpl:hover{background:var(--gray100)}
 .month-nav{display:flex;align-items:center;gap:4px;
   background:var(--gray50);border:var(--border);
   border-radius:var(--radius-sm);padding:3px 6px}
@@ -732,6 +737,9 @@ input[type=file]{display:none}
   <div class="raw-popup-header">📤 RAW 파일 업데이트</div>
   <button class="raw-popup-btn" onclick="document.getElementById('parkRawInput').click()">🅿️ 주차 RAW 업로드</button>
   <button class="raw-popup-btn ev" onclick="document.getElementById('evRawInput').click()">⚡ EV RAW 업로드</button>
+  <div class="raw-popup-divider"></div>
+  <button class="raw-popup-btn tmpl" onclick="downloadParkTemplate()">📥 주차 업로드 양식 다운로드</button>
+  <button class="raw-popup-btn tmpl" onclick="downloadEvTemplate()">📥 EV 업로드 양식 다운로드</button>
 </div>
 
 <!-- Tab Navigation -->
@@ -2254,7 +2262,7 @@ async function fbSaveMonth(ym){
     }
   }catch(e){
     console.error('월 데이터 저장 실패:', e);
-    alert('⚠️ 서버 저장 실패: '+e.message+'\n(관리자로 로그인되어 있는지 확인해주세요)');
+    showToast('서버 저장 실패: '+e.message+' (관리자로 로그인되어 있는지 확인해주세요)', 'error');
   }
 }
 async function fbSaveLots(ym){
@@ -2265,12 +2273,12 @@ async function fbSaveLots(ym){
 async function fbSaveManualSales(){
   if(!fbReady || !fbDb) return;
   try{ await fbDb.collection('meta').doc('manualSales').set({data: manualData, on: manualOn}); }
-  catch(e){ console.error('수기매출 저장 실패:', e); alert('⚠️ 서버 저장 실패: '+e.message); }
+  catch(e){ console.error('수기매출 저장 실패:', e); showToast('서버 저장 실패: '+e.message, 'error'); }
 }
 async function fbSaveMonthAdjData(){
   if(!fbReady || !fbDb) return;
   try{ await fbDb.collection('meta').doc('monthAdj').set({data: monthAdj}); }
-  catch(e){ console.error('조정값 저장 실패:', e); alert('⚠️ 서버 저장 실패: '+e.message); }
+  catch(e){ console.error('조정값 저장 실패:', e); showToast('서버 저장 실패: '+e.message, 'error'); }
 }
 async function fbSaveExpectedRevenue(){
   if(!fbReady || !fbDb) return false;
@@ -2279,7 +2287,7 @@ async function fbSaveExpectedRevenue(){
     return true;
   }catch(e){
     console.error('예상매출 저장 실패:', e);
-    alert('⚠️ 서버 저장 실패: '+e.message);
+    showToast('서버 저장 실패: '+e.message, 'error');
     return false;
   }
 }
@@ -2287,6 +2295,140 @@ async function fbSaveMemos(){
   if(!fbReady || !fbDb) return;
   try{ await fbDb.collection('meta').doc('memos').set({data: pkMemos2}); }
   catch(e){ console.error('메모 저장 실패:', e); }
+}
+
+// ═══════════════════════════════════════════
+// RAW 업로드 양식(템플릿) 다운로드 - 현재 보고 있는 월 기준으로 생성
+// 필수 컬럼(빨강 헤더) vs 선택 컬럼(회색 헤더)을 색상으로 구분
+// ═══════════════════════════════════════════
+const TMPL_REQUIRED_FILL='FFFCA5A5';   // 연빨강 (필수)
+const TMPL_REQUIRED_FONT='FF991B1B';
+const TMPL_OPTIONAL_FILL='FFE5E7EB';   // 연회색 (선택)
+const TMPL_OPTIONAL_FONT='FF4B5563';
+
+function downloadFileFromWorkbook(wb, filename){
+  wb.xlsx.writeBuffer().then(buffer=>{
+    const blob=new Blob([buffer], {type:'application/octet-stream'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }).catch(e=>{
+    console.error('템플릿 생성 실패:', e);
+    showToast('템플릿 파일 생성에 실패했습니다: '+e.message, 'error');
+  });
+}
+function styleHeaderCell(cell, required){
+  cell.fill={type:'pattern', pattern:'solid', fgColor:{argb: required?TMPL_REQUIRED_FILL:TMPL_OPTIONAL_FILL}};
+  cell.font={bold:true, color:{argb: required?TMPL_REQUIRED_FONT:TMPL_OPTIONAL_FONT}, size:11};
+  cell.alignment={horizontal:'center', vertical:'middle'};
+  cell.border={bottom:{style:'thin', color:{argb:'FFD1D5DB'}}};
+}
+
+async function downloadParkTemplate(){
+  const y=cur.year, m=cur.month;
+  const daysInMonth=new Date(y, m, 0).getDate();
+  const headers=['순번','주차장코드','주차장명','지역','구분','계약연도','비고','구분(합계)'];
+  // 필수 여부: 순번(선택) 주차장코드(필수-비어있으면 행무시) 주차장명(필수) 지역(선택)
+  //           구분(필수) 계약연도(선택) 비고(선택) 구분(합계)(필수)
+  const requiredFlags=[false,true,true,false,true,false,false,true];
+  const dayHeaders=[];
+  for(let d=1; d<=daysInMonth; d++) dayHeaders.push(d+'일');
+
+  const sampleBase=[
+    ['1','P001','인천공항T1주차장','인천','대형','2019','','합계'],
+    ['2','P002','김포공항주차장','서울','대형','2021','','합계'],
+    ['3','P010','서울대학교주차장','서울','대학교','2018','','합계'],
+    ['4','P011','연세대학교주차장','서울','대학교','2022','','합계'],
+    ['5','G001','공항철도 합계','-','공항철도','2017','','합계'],
+    ['6','G002','SR 합계','-','SR','2020','','합계'],
+    ['7','G003','광명역 합계','-','광명역','2019','','합계'],
+    ['8','G004','매입 합계','-','매입','2023','','합계'],
+    ['9','G005','중소형(관리) 합계','-','중소형(관리)','2021','','합계'],
+    ['10','G006','중소형(배분) 합계','-','중소형(배분)','2020','','합계'],
+    ['11','G007','중소형(일반) 합계','-','중소형(일반)','2022','','합계']
+  ];
+
+  const wb=new ExcelJS.Workbook();
+  const ws=wb.addWorksheet(y+'년 '+m+'월');
+
+  // 범례
+  ws.addRow(['🔴 빨강 헤더 = 필수 입력 컬럼 (비우거나 형식이 다르면 매출이 집계되지 않습니다)']);
+  ws.addRow(['⚪ 회색 헤더 = 선택 입력 컬럼 (참고용, 집계에는 사용되지 않습니다)']);
+  ws.addRow([]);
+  const legend1=ws.getRow(1).getCell(1); legend1.font={bold:true, color:{argb:TMPL_REQUIRED_FONT}};
+  const legend2=ws.getRow(2).getCell(1); legend2.font={bold:true, color:{argb:TMPL_OPTIONAL_FONT}};
+
+  // 헤더 행
+  const headerRowIdx=4;
+  const headerRow=ws.getRow(headerRowIdx);
+  headers.forEach((h,i)=>{ headerRow.getCell(i+1).value=h; styleHeaderCell(headerRow.getCell(i+1), requiredFlags[i]); });
+  dayHeaders.forEach((h,i)=>{ const c=headerRow.getCell(headers.length+1+i); c.value=h; styleHeaderCell(c, true); }); // 일자 매출 컬럼 = 필수
+  headerRow.commit();
+
+  // 데이터 행
+  sampleBase.forEach(r=>{
+    const row=r.slice();
+    const base=500000+Math.round(Math.random()*1500000);
+    for(let d=0; d<daysInMonth; d++) row.push(base+Math.round((Math.random()-0.5)*100000));
+    ws.addRow(row);
+  });
+
+  ws.addRow([]);
+  const noteRow=ws.addRow(['※ 시트명은 "YYYY년 M월" 형식 필수 / B열 비어있으면 해당 행 무시 / H열 "구분"이 정확히 "합계"인 행만 매출 집계 / E열 "구분" 값에 대형·대학교 포함 시 개별 주차장으로 별도 추출됩니다 / F열(계약연도)은 참고용이며 집계에는 사용되지 않습니다']);
+  noteRow.getCell(1).font={italic:true, color:{argb:'FFDC2626'}, size:10};
+
+  ws.columns=[...headers, ...dayHeaders].map((h,i)=>({width: i<8?14:8}));
+  ws.getRow(headerRowIdx).height=20;
+
+  downloadFileFromWorkbook(wb, '주차_RAW_업로드양식_'+y+'-'+String(m).padStart(2,'0')+'.xlsx');
+}
+
+async function downloadEvTemplate(){
+  const y=cur.year, m=cur.month;
+  const daysInMonth=new Date(y, m, 0).getDate();
+  const headers=['순번','날짜','요일','기기수','충전량(kWh)','충전건수','당사매출(원, VAT별도)','최저기온(℃)','최고기온(℃)','강수량(mm)'];
+  // 필수: 날짜, 기기수, 충전량, 충전건수, 당사매출 / 선택: 순번, 요일, 최저, 최고, 강수
+  const requiredFlags=[false,true,false,true,true,true,true,false,false,false];
+  const DOW=['일','월','화','수','목','금','토'];
+  const rainOptions=[0,0,0,0,1.2,3.5,8.7];
+
+  const wb=new ExcelJS.Workbook();
+  const ws=wb.addWorksheet('Sheet1');
+
+  ws.addRow(['🔴 빨강 헤더 = 필수 입력 컬럼 (비우거나 형식이 다르면 매출/충전량이 집계되지 않습니다)']);
+  ws.addRow(['⚪ 회색 헤더 = 선택 입력 컬럼 (참고용, 기상 카드 등에만 사용됩니다)']);
+  ws.addRow([]);
+  ws.getRow(1).getCell(1).font={bold:true, color:{argb:TMPL_REQUIRED_FONT}};
+  ws.getRow(2).getCell(1).font={bold:true, color:{argb:TMPL_OPTIONAL_FONT}};
+
+  const headerRowIdx=4;
+  const headerRow=ws.getRow(headerRowIdx);
+  headers.forEach((h,i)=>{ headerRow.getCell(i+1).value=h; styleHeaderCell(headerRow.getCell(i+1), requiredFlags[i]); });
+  headerRow.commit();
+
+  for(let d=1; d<=daysInMonth; d++){
+    const dt=new Date(y, m-1, d);
+    const dateStr=y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    const dow=DOW[dt.getDay()];
+    const charging=Number((650+Math.random()*300).toFixed(1));
+    const count=Math.round(120+Math.random()*100);
+    const revenue=Math.round(charging*300);
+    const lo=Number((20+Math.random()*4).toFixed(1));
+    const hi=Number((27+Math.random()*6).toFixed(1));
+    const rain=rainOptions[Math.floor(Math.random()*rainOptions.length)];
+    ws.addRow([d, dateStr, dow, 42, charging, count, revenue, lo, hi, rain]);
+  }
+
+  ws.addRow([]);
+  const noteRow=ws.addRow(['※ 날짜열(B열)은 반드시 날짜 형식(YYYY-MM-DD)으로 입력 / 헤더에 "충전량"이 들어간 열이 총 충전량으로 인식되며 "건당·기당"이 포함된 열은 제외됩니다']);
+  noteRow.getCell(1).font={italic:true, color:{argb:'FFDC2626'}, size:10};
+
+  ws.columns=[{width:6},{width:12},{width:6},{width:8},{width:12},{width:10},{width:20},{width:12},{width:12},{width:10}];
+  ws.getRow(headerRowIdx).height=20;
+
+  downloadFileFromWorkbook(wb, 'EV_RAW_업로드양식_'+y+'-'+String(m).padStart(2,'0')+'.xlsx');
 }
 
 // ── 주차 RAW 업로드 ─────────────────────────────────────────────────────
@@ -2689,7 +2831,7 @@ async function saveExpectedRevenue(btn){
   document.getElementById('expPark').value='';
   document.getElementById('expEv').value='';
   updateMobility();
-  alert('✅ 예상매출이 저장되었습니다.');
+  showToast('예상매출이 저장되었습니다.', 'success');
 }
 function deleteExpectedRevenue(ym){
   delete expectedRevenue[ym];
@@ -2788,7 +2930,7 @@ async function checkPw(){
   const pw=document.getElementById('pwInput').value;
   const btn=document.querySelector('.pw-btn');
   if(!fbReady || !fbAuth){
-    alert('⚠️ Firebase 설정이 완료되지 않았습니다 (firebaseConfig 값을 확인하세요).');
+    showToast('Firebase 설정이 완료되지 않았습니다 (firebaseConfig 값을 확인하세요).', 'error');
     return;
   }
   if(!idRaw){
@@ -3068,6 +3210,39 @@ function showFbLoadingOverlay(){
 function hideFbLoadingOverlay(){
   const el=document.getElementById('fbLoadingOverlay');
   if(el)el.remove();
+}
+
+// ═══════════════════════════════════════════
+// 조용한 알림(토스트) - 거슬리는 alert() 팝업 대신 사용
+// 화면 우측 하단에 잠깐 떴다가 자동으로 사라짐 (사용자 확인 클릭 불필요)
+// ═══════════════════════════════════════════
+function showToast(message, type){
+  type = type || 'error'; // 'error' | 'success' | 'info'
+  let wrap = document.getElementById('toastWrap');
+  if(!wrap){
+    wrap = document.createElement('div');
+    wrap.id = 'toastWrap';
+    wrap.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:99998;display:flex;flex-direction:column;gap:8px;align-items:flex-end';
+    document.body.appendChild(wrap);
+  }
+  const colors = {
+    error:   {bg:'#fee2e2', border:'#fca5a5', text:'#991b1b', icon:'⚠️'},
+    success: {bg:'#d1fae5', border:'#6ee7b7', text:'#065f46', icon:'✅'},
+    info:    {bg:'#e0e7ff', border:'#a5b4fc', text:'#3730a3', icon:'ℹ️'}
+  };
+  const c = colors[type] || colors.error;
+  const el = document.createElement('div');
+  el.style.cssText = `background:${c.bg};border:1px solid ${c.border};color:${c.text};
+    padding:12px 16px;border-radius:10px;font-size:13px;font-weight:600;max-width:340px;
+    box-shadow:0 8px 24px rgba(0,0,0,.15);opacity:0;transform:translateY(8px);
+    transition:opacity .25s,transform .25s;display:flex;align-items:flex-start;gap:8px;line-height:1.5`;
+  el.innerHTML = `<span>${c.icon}</span><span>${message}</span>`;
+  wrap.appendChild(el);
+  requestAnimationFrame(()=>{ el.style.opacity='1'; el.style.transform='translateY(0)'; });
+  setTimeout(()=>{
+    el.style.opacity='0'; el.style.transform='translateY(8px)';
+    setTimeout(()=>el.remove(), 300);
+  }, 4500);
 }
 
 /* ══ 주차 분석 ══════════════════════════════════════════ */
