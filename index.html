@@ -9,7 +9,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -1354,29 +1353,30 @@ const firebaseConfig = {
 // 관리자 계정은 Firebase 콘솔 Authentication에서 여러 명 생성 가능
 // (누가 실제로 쓸 수 있는지는 firestore.rules의 이메일 목록으로 서버단에서 통제됨)
 
-let fbDb = null, fbAuth = null, fbReady = false;
+// 관리자 인증은 자체 코드에서 처리 (Firebase Authentication 미사용)
+// 관리자 ID: admin / 비밀번호: nice2122!
+const ADMIN_ID = 'admin';
+const ADMIN_PW = 'nice2122!';
+
+let fbDb = null, fbReady = false;
 try{
   firebase.initializeApp(firebaseConfig);
   fbDb = firebase.firestore();
-  fbAuth = firebase.auth();
   fbReady = true;
 }catch(e){
   console.error('Firebase 초기화 실패 (firebaseConfig 값을 확인하세요):', e);
 }
 
 // ═══════════════════════════════════════════
-// 관리자 로그인 상태 실시간 표시 (상단바 배지)
-// - Firebase 세션이 실제 기준(true source). 새로고침해도 로그인 상태가 살아있으면 자동 반영됨.
+// 관리자 로그인 상태 표시 (상단바 배지)
+// - 자체 로그인(adminUnlocked)이 기준. 새로고침하면 다시 로그인해야 합니다.
 // ═══════════════════════════════════════════
-function updateAdminBadge(user){
+function updateAdminBadge(){
   const badge=document.getElementById('adminStatusBadge');
   if(!badge)return;
-  if(user){
-    // 실제 이메일 대신, 매핑된 관리자 ID가 있으면 그걸로 표시 (사용자 경험 일관성)
-    const idKey=Object.keys(ADMIN_ID_MAP||{}).find(k=>ADMIN_ID_MAP[k]===user.email);
-    const displayName=idKey||user.email;
+  if(adminUnlocked){
     badge.style.display='inline-flex';
-    badge.innerHTML='🟢 관리자 로그인됨 · '+displayName+
+    badge.innerHTML='🟢 관리자 로그인됨 · admin'+
       ' <button class="logout-link" onclick="adminLogout()">로그아웃</button>';
   } else {
     badge.style.display='none';
@@ -1384,19 +1384,13 @@ function updateAdminBadge(user){
   }
 }
 function adminLogout(){
-  if(fbAuth) fbAuth.signOut();
   adminUnlocked=false;
+  updateAdminBadge();
   // 로그아웃 시 '관리' 탭이 열려있으면 첫 탭으로 이동
   if(document.getElementById('admin')?.classList.contains('active')){
     const firstTab=document.querySelector('.tab');
     if(firstTab) firstTab.click();
   }
-}
-if(fbReady && fbAuth){
-  fbAuth.onAuthStateChanged(function(user){
-    adminUnlocked=!!user;
-    updateAdminBadge(user);
-  });
 }
 
 // ===== DATA =====
@@ -2542,7 +2536,7 @@ function processParkingRaw(file){
       updateMobility();
 
       let cloudMsg='';
-      if(fbReady && fbAuth && fbAuth.currentUser){
+      if(fbReady && adminUnlocked){
         for(const ym of affectedMonths){
           await fbSaveMonth(ym);
           if(uploadedLots[ym]) await fbSaveLots(ym);
@@ -2660,7 +2654,7 @@ function processEvRaw(file){
       updateMobility();
 
       let cloudMsg='';
-      if(fbReady && fbAuth && fbAuth.currentUser){
+      if(fbReady && adminUnlocked){
         for(const ym of affectedMonths){ await fbSaveMonth(ym); }
         cloudMsg='\n☁️ 서버에 저장되어 링크를 보는 모두에게 반영됩니다.';
       } else {
@@ -2915,43 +2909,22 @@ function openAdmin(btn){
   }
 }
 // ═══════════════════════════════════════════
-// 관리자 ID → 실제 Firebase 이메일 매핑
-// (사용자는 간단한 ID만 기억하면 되고, 내부적으로는 여전히 Firebase Authentication으로
-//  인증되므로 Firestore 쓰기 보안(firestore.rules)이 그대로 유지됩니다)
+// 관리자 로그인 - 자체 코드에서 처리 (Firebase Authentication 미사용)
+// ID: admin / 비밀번호: nice2122!
 // ═══════════════════════════════════════════
-const ADMIN_ID_MAP = {
-  'admin': 'hj.kim@niceinfra.co.kr',
-  'nice': 'bjl9525@gmail.com'
-  // 관리자를 더 추가하려면 여기에 'id':'실제이메일' 형태로 추가하고,
-  // 해당 이메일을 Firebase Authentication(사용자 추가)과 Firestore Rules 허용목록에도 등록하세요.
-};
-async function checkPw(){
+function checkPw(){
   const idRaw=document.getElementById('pwEmail').value.trim();
   const pw=document.getElementById('pwInput').value;
   const btn=document.querySelector('.pw-btn');
-  if(!fbReady || !fbAuth){
-    showToast('Firebase 설정이 완료되지 않았습니다 (firebaseConfig 값을 확인하세요).', 'error');
-    return;
-  }
   if(!idRaw){
     const inp=document.getElementById('pwEmail');
     inp.classList.add('error');
     setTimeout(()=>inp.classList.remove('error'),400);
     return;
   }
-  // 등록된 관리자 ID인지 확인 → 실제 Firebase 이메일로 변환
-  const email = ADMIN_ID_MAP[idRaw.toLowerCase()] || (idRaw.includes('@') ? idRaw : null);
-  if(!email){
-    const inp=document.getElementById('pwEmail');
-    inp.classList.add('error');
-    setTimeout(()=>inp.classList.remove('error'),400);
-    alert('⚠️ 등록되지 않은 관리자 ID입니다.');
-    return;
-  }
-  if(btn){ btn.disabled=true; btn.textContent='확인 중...'; }
-  try{
-    await fbAuth.signInWithEmailAndPassword(email, pw);
+  if(idRaw.toLowerCase()===ADMIN_ID.toLowerCase() && pw===ADMIN_PW){
     adminUnlocked=true;
+    updateAdminBadge();
     const m=document.getElementById('pwModal');
     m.classList.remove('show');
     m.style.cssText='';
@@ -2963,14 +2936,12 @@ async function checkPw(){
     document.getElementById('admin').classList.add('active');
     if(window._adminBtn)window._adminBtn.classList.add('active');
     renderManualList();
-  }catch(e){
-    console.error('로그인 실패:', e);
+  } else {
     const inp=document.getElementById('pwInput');
     inp.classList.add('error');
     inp.value='';
     setTimeout(()=>inp.classList.remove('error'),400);
-  }finally{
-    if(btn){ btn.disabled=false; btn.textContent='확인'; }
+    showToast('ID 또는 비밀번호가 올바르지 않습니다.', 'error');
   }
 }
 function closePwModal(){
