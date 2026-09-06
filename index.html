@@ -2819,25 +2819,24 @@ async function saveExpectedRevenue(btn){
   const prev=expectedRevenue[ym]||{};
   const park=parkInput===''?prev.park:parseFloat(parkInput);
   const ev=evInput===''?prev.ev:parseFloat(evInput);
-  const backup=expectedRevenue[ym]; // 저장 실패 시 복구용
   expectedRevenue[ym]={
     park: isNaN(park)?null:park,
     ev: isNaN(ev)?null:ev
   };
-  if(btn){ btn.disabled=true; btn.textContent='저장 중...'; }
-  const ok=await fbSaveExpectedRevenue();
-  if(btn){ btn.disabled=false; btn.textContent='저장'; }
-  if(!ok){
-    // 서버 저장 실패 → 화면에 잘못된 값이 남지 않도록 원래 상태로 되돌림
-    if(backup===undefined) delete expectedRevenue[ym];
-    else expectedRevenue[ym]=backup;
-    return;
-  }
+  // 서버 저장 성공 여부와 상관없이, 지금 이 화면에는 바로 반영
   renderExpList();
   document.getElementById('expPark').value='';
   document.getElementById('expEv').value='';
   updateMobility();
-  showToast('예상매출이 저장되었습니다.', 'success');
+
+  if(btn){ btn.disabled=true; btn.textContent='저장 중...'; }
+  const ok=await fbSaveExpectedRevenue();
+  if(btn){ btn.disabled=false; btn.textContent='저장'; }
+  if(ok){
+    showToast('예상매출이 저장되었습니다. (서버에도 반영되어 다른 사람도 볼 수 있습니다)', 'success');
+  } else {
+    showToast('이 브라우저 화면에는 반영되었지만, 서버 저장에는 실패했습니다. 새로고침하거나 다른 사람이 접속하면 사라질 수 있습니다.', 'error');
+  }
 }
 function deleteExpectedRevenue(ym){
   delete expectedRevenue[ym];
@@ -3160,6 +3159,31 @@ function updateCalTrigger(){
   document.getElementById('monthLabel').textContent=`${y}년 ${m}월`;
 }
 
+// ═══════════════════════════════════════════
+// 실제 데이터가 있는 가장 최근 날짜를 찾아서 초기 화면 날짜로 사용
+// (주차 또는 EV 매출이 0보다 큰 가장 최근 일자)
+// ═══════════════════════════════════════════
+function findLatestDataDate(){
+  const months = Object.keys(ALL_DATA).sort(); // 오래된 → 최신
+  for(let mi = months.length - 1; mi >= 0; mi--){
+    const ym = months[mi];
+    const md = ALL_DATA[ym];
+    if(!md) continue;
+    const [y, m] = ym.split('-').map(Number);
+    const parking = md.parking || [];
+    const ev = md.ev || [];
+    const dayCount = Math.max(parking.length, ev.length);
+    for(let d = dayCount - 1; d >= 0; d--){
+      const pRev = parking[d] ? (parking[d].revenue || 0) : 0;
+      const eRev = ev[d] ? (ev[d].revenue || 0) : 0;
+      if(pRev > 0 || eRev > 0){
+        return {year: y, month: m, day: d + 1};
+      }
+    }
+  }
+  return null; // 데이터가 전혀 없으면 기존 기본값 유지
+}
+
 window.addEventListener('load',async()=>{
 
   showFbLoadingOverlay();
@@ -3173,12 +3197,23 @@ window.addEventListener('load',async()=>{
   renderAdjList();
   populateExpYM();
   renderExpList();
+
+  // 데이터가 있는 가장 최근 날짜로 초기 화면 자동 설정
+  const latest = findLatestDataDate();
+  if(latest){
+    cur.year = latest.year;
+    cur.month = latest.month;
+    cur.day = latest.day;
+    recomputeMonthRange();
+  }
+
   // 오늘 날짜를 수기입력 기본값으로
   const today=new Date();
   const ymd=today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');
   const mDateEl=document.getElementById('mDate');
   if(mDateEl)mDateEl.value=ymd;
   updateNav();
+  updateCalTrigger();
   updateMobility();
 });
 
