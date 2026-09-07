@@ -1645,7 +1645,12 @@ function updateMobility(){
   const dateTo=`${ym(cur.year,cur.month)}-${String(day).padStart(2,'0')}`;
   const manP=getManualSum(dateFrom,dateTo,'parking');
   const manE=getManualSum(dateFrom,dateTo,'ev');
-  const pTotalAdj=vex(pTotal)+manP;
+  // 월 조정값 (환불/사후정산/아이파크몰 KCP 변동) - 일별 균등 분배하여 매출에 반영
+  const curYmKey=ym(cur.year,cur.month);
+  const adjEntry=monthAdj[curYmKey];
+  const adjMonthTotal=adjEntry?(adjEntry.refund||0)+(adjEntry.settle||0)+(adjEntry.kcp||0):0;
+  const adjDaily=pAll.length?adjMonthTotal/pAll.length:0;
+  const pTotalAdj=vex(pTotal)+manP+adjMonthTotal;
   const eTotalAdj=eTotal+manE;
   const pAvgAdj=pTotalAdj/pAll.length;
   const eAvgAdj=eTotalAdj/eAll.length;
@@ -1724,10 +1729,10 @@ function updateMobility(){
     }
   }
   
-  // Daily revenue display
-  const dayPRevAdj=(pDay?vex(pDay.revenue):0)+manPDay;
+  // Daily revenue display (환불/사후정산/KCP 조정값 일별 균등분배분 포함)
+  const dayPRevAdj=(pDay?vex(pDay.revenue):0)+manPDay+adjDaily;
   const dayERevAdj=(eDay?eDay.revenue:0)+manEDay;
-  document.getElementById('dayParkRev').textContent = fmtMil(dayPRevAdj)+(manPDay>0?'*':'');
+  document.getElementById('dayParkRev').textContent = fmtMil(dayPRevAdj)+(manPDay>0||adjMonthTotal!==0?'*':'');
   document.getElementById('dayParkAvg').textContent = fmtMil(pAvgAdj);
   document.getElementById('dayEvRev').textContent = fmtMil(dayERevAdj)+(manEDay>0?'*':'');
   document.getElementById('dayEvAvg').textContent = fmtMil(eAvgAdj);
@@ -1867,7 +1872,15 @@ function updateMobility(){
   let typeTotalPrev=0;
   CONTRACT_TYPES.filter(ct=>ct!=='기타').forEach(ct=>{
     const v=typeData[ct]?typeData[ct][dayIdx]:0;
-    const prevW=typeData[ct]&&dayIdx>=7?typeData[ct][dayIdx-7]:0;
+    // 전주 동일요일 (7일 전) - 월초 1~7일은 전월 데이터까지 이어서 조회
+    let prevW=0;
+    if(dayIdx>=7){
+      prevW=typeData[ct]?(typeData[ct][dayIdx-7]||0):0;
+    } else if(prevMd && prevMd.parkingByType && prevMd.parkingByType[ct]){
+      const prevArr=prevMd.parkingByType[ct];
+      const prevIdx=prevArr.length+(dayIdx-7);
+      prevW=prevIdx>=0?(prevArr[prevIdx]||0):0;
+    }
     const ch=prevW?pct(v,prevW):null;
     const chAmt=prevW!=null?vex(v-prevW):null;
     typeTotal+=v;
@@ -1883,13 +1896,20 @@ function updateMobility(){
       <td class="type-change-amt ${chCls}">${chAmtTxt}</td>
     </tr>`;
   });
-  // 합계 행 (증감율+증감액 포함)
+  // 합계 행 (증감율+증감액은 조정값 제외한 순수 매출 기준, 당일매출 표시값에는 조정값 포함)
   const totCh=typeTotalPrev?pct(typeTotal,typeTotalPrev):null;
   const totAmt=typeTotalPrev!=null?vex(typeTotal-typeTotalPrev):null;
   const totCls=totCh===null?'':(totCh>=0?'up':'dn');
   const totChTxt=totCh===null?'—':`${totCh>=0?'▲':'▼'}${Math.abs(totCh).toFixed(1)}%`;
   const totAmtSign=totAmt!=null?(totAmt>=0?'+':''):'';
   const totAmtTxt=totAmt===null?'—':`${totAmtSign}${fmtK(totAmt)}`;
+  const totalDisplay=vex(typeTotal)+adjDaily;
+  const adjNoteRow=adjMonthTotal!==0?`
+      <tr class="type-row">
+        <td colspan="4" style="font-size:11px;color:var(--gray500);padding:6px 12px;text-align:left;background:var(--gray50)">
+          ↳ 조정값 일할 반영: 환불 ${fmtK(adjEntry.refund||0)} · 사후정산 ${fmtK(adjEntry.settle||0)} · KCP ${fmtK(adjEntry.kcp||0)} (월 총액 기준, ${pAll.length}일 균등분할)
+        </td>
+      </tr>`:'';
   const typeHtml=`<table class="type-table">
     <thead class="type-thead">
       <tr>
@@ -1902,10 +1922,10 @@ function updateMobility(){
     <tbody>${typeRows}
       <tr class="type-row total-row">
         <td class="type-name">합계</td>
-        <td class="type-rev">${fmtK(vex(typeTotal))}</td>
+        <td class="type-rev">${fmtK(totalDisplay)}</td>
         <td class="type-change ${totCls}">${totChTxt}</td>
         <td class="type-change-amt ${totCls}">${totAmtTxt}</td>
-      </tr>
+      </tr>${adjNoteRow}
     </tbody>
   </table>`;
   document.getElementById('typeBody').innerHTML=typeHtml;
@@ -1913,16 +1933,27 @@ function updateMobility(){
   // ===== 전주대비 특이사항 (내장 데이터 즉시 표시, RAW 업로드 시 개별 주차장으로 전환) =====
   const curKey=ym(cur.year,cur.month);
   const lotsForMonth=uploadedLots[curKey]||[];
+  // 월초 1~7일은 전월 주차장 데이터까지 이어서 조회 (이름+유형으로 매칭)
+  const prevLotsForMonth=prevMd?(uploadedLots[prevKey]||[]):[];
+  const prevDaysCount=prevMd?daysInMonthOf(prevKey):0;
+  const getLotPrevValue=(p)=>{
+    if(dayIdx>=7) return p.days[dayIdx-7]||0;
+    if(!prevDaysCount) return 0;
+    const prevIdx=prevDaysCount+dayIdx-7;
+    if(prevIdx<0) return 0;
+    const match=prevLotsForMonth.find(pl=>pl.name===p.name&&pl.ct===p.ct);
+    return match?(match.days[prevIdx]||0):0;
+  };
   let incHtml='',decHtml='';
   if(lotsForMonth.length>0){
     // 업로드된 개별 주차장 데이터 사용 (대형/대학교 필터)
     const ranked=lotsForMonth
       .filter(p=>p.ct==='대형'||p.ct==='대학교')
-      .map(p=>{const c=p.days[dayIdx]||0,pw=dayIdx>=7?p.days[dayIdx-7]||0:0;return{...p,curRev:c,ch:c-pw};})
+      .map(p=>{const c=p.days[dayIdx]||0,pw=getLotPrevValue(p);return{...p,curRev:c,prevRev:pw,ch:c-pw};})
       .filter(p=>p.curRev>0).sort((a,b)=>b.ch-a.ch);
     const inc=ranked.slice(0,4);
     const dec=[...ranked].sort((a,b)=>a.ch-b.ch).slice(0,4);
-    const lotPct=(p)=>p.days[dayIdx>=7?dayIdx-7:dayIdx]>0?pct(p.days[dayIdx],p.days[dayIdx-7]):null;
+    const lotPct=(p)=>p.prevRev>0?pct(p.curRev,p.prevRev):null;
     incHtml=inc.map(p=>{
       const r=lotPct(p);
       const rTxt=r!=null?`▲${Math.abs(r).toFixed(1)}%`:'';
@@ -1961,7 +1992,14 @@ function updateMobility(){
   
   // EV stats
   if(eDay){
-    const prevWkEV=prevWday>0?md.ev.find(e=>parseInt(e.date.split('-')[1])===day-7):null;
+    // 전주 동요일 (7일 전) - 월초 1~7일은 전월 데이터까지 이어서 조회
+    let prevWkEV=null;
+    if(prevWday>0){
+      prevWkEV=md.ev.find(e=>parseInt(e.date.split('-')[1])===prevWday);
+    } else if(prevMd){
+      const prevEvDay=prevMd.ev.length+prevWday;
+      prevWkEV=prevMd.ev.find(e=>parseInt(e.date.split('-')[1])===prevEvDay);
+    }
     const perDev=eDay.charging&&eDay.devices?eDay.charging/eDay.devices:0;
     const prevPerDev=prevWkEV&&prevWkEV.charging&&prevWkEV.devices?prevWkEV.charging/prevWkEV.devices:0;
     // EV: 증감율 + 증감액 헬퍼
