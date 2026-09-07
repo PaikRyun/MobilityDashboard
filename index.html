@@ -1477,8 +1477,8 @@ let charts = {park:null, ev:null, annual:null};
 // ===== HELPERS =====
 const V=1.1; // VAT포함 → VAT별도 변환 (업로드 데이터가 VAT포함)
 function vex(v){return v/V;} // VAT제거
-function fmtM(v){return (Math.round(v/1e5)/10).toFixed(1);}  // -> 억원
-function fmtMM(v){return (Math.round(v/1e5)/10).toFixed(1)+'억';}
+function fmtM(v){return (Math.round(v/1e7)/10).toFixed(1);}  // -> 억원
+function fmtMM(v){return (Math.round(v/1e7)/10).toFixed(1)+'억';}
 function fmtMil(v){return (Math.round(v/1e4)/100).toFixed(1);}  // -> 백만
 function fmtK(v){return Math.round(v/1e3).toLocaleString()+'천원';}
 function ym(y,m){return y+'-'+String(m).padStart(2,'0');}
