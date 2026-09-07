@@ -1645,12 +1645,14 @@ function updateMobility(){
   const dateTo=`${ym(cur.year,cur.month)}-${String(day).padStart(2,'0')}`;
   const manP=getManualSum(dateFrom,dateTo,'parking');
   const manE=getManualSum(dateFrom,dateTo,'ev');
-  // 월 조정값 (환불/사후정산/아이파크몰 KCP 변동) - 일별 균등 분배하여 매출에 반영
+  // 월 조정값 (환불/사후정산/아이파크몰 KCP 변동) - 해당 월 "전체 일수" 기준으로 균등 분배
   const curYmKey=ym(cur.year,cur.month);
   const adjEntry=monthAdj[curYmKey];
   const adjMonthTotal=adjEntry?(adjEntry.refund||0)+(adjEntry.settle||0)+(adjEntry.kcp||0):0;
-  const adjDaily=pAll.length?adjMonthTotal/pAll.length:0;
-  const pTotalAdj=vex(pTotal)+manP+adjMonthTotal;
+  const daysInCurMonth=daysInMonthOf(curYmKey);
+  const adjDaily=daysInCurMonth?adjMonthTotal/daysInCurMonth:0;
+  // 당월 누계에는 "오늘까지 경과한 일수만큼"의 조정값만 반영 (월 전체 조정값을 한번에 더하지 않음)
+  const pTotalAdj=vex(pTotal)+manP+(adjDaily*day);
   const eTotalAdj=eTotal+manE;
   const pAvgAdj=pTotalAdj/pAll.length;
   const eAvgAdj=eTotalAdj/eAll.length;
@@ -2090,11 +2092,12 @@ function drawMonthlyCharts(pData, eData){
     const day=parseInt(d.date.split('-')[1]);
     return day+'일('+d.day+')';
   });
-  // 환불/사후정산/아이파크몰 KCP 변동 조정값 - 일별 균등분배하여 차트에도 반영
+  // 환불/사후정산/아이파크몰 KCP 변동 조정값 - 해당 월 "전체 일수" 기준으로 균등분배하여 차트에도 반영
   const chartYmKey=ym(cur.year,cur.month);
   const chartAdjEntry=monthAdj[chartYmKey];
   const chartAdjMonthTotal=chartAdjEntry?(chartAdjEntry.refund||0)+(chartAdjEntry.settle||0)+(chartAdjEntry.kcp||0):0;
-  const chartAdjDaily=pData.length?chartAdjMonthTotal/pData.length:0;
+  const chartDaysInMonth=daysInMonthOf(chartYmKey);
+  const chartAdjDaily=chartDaysInMonth?chartAdjMonthTotal/chartDaysInMonth:0;
   const pRevs=pData.map(d=>vex(d.revenue)/1e6+(d.revenue>0?chartAdjDaily/1e6:0));
   const eRevs=eData.map(d=>d.revenue/1e6);
   const pWeekly=calcWeekAvg(pData.map(d=>({revenue:d.revenue>0?vex(d.revenue)+chartAdjDaily:0})));
