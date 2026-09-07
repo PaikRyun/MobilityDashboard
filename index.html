@@ -1904,10 +1904,14 @@ function updateMobility(){
   const totAmtSign=totAmt!=null?(totAmt>=0?'+':''):'';
   const totAmtTxt=totAmt===null?'—':`${totAmtSign}${fmtK(totAmt)}`;
   const totalDisplay=vex(typeTotal)+adjDaily;
+  const adjLabels=[];
+  if(adjEntry&&adjEntry.refund)adjLabels.push('환불');
+  if(adjEntry&&adjEntry.settle)adjLabels.push('사후정산');
+  if(adjEntry&&adjEntry.kcp)adjLabels.push('KCP');
   const adjNoteRow=adjMonthTotal!==0?`
       <tr class="type-row">
         <td colspan="4" style="font-size:11px;color:var(--gray500);padding:6px 12px;text-align:left;background:var(--gray50)">
-          ↳ 조정값 일할 반영: 환불 ${fmtK(adjEntry.refund||0)} · 사후정산 ${fmtK(adjEntry.settle||0)} · KCP ${fmtK(adjEntry.kcp||0)} (월 총액 기준, ${pAll.length}일 균등분할)
+          ↳ ${adjLabels.join(', ')} 반영
         </td>
       </tr>`:'';
   const typeHtml=`<table class="type-table">
