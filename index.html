@@ -2090,9 +2090,14 @@ function drawMonthlyCharts(pData, eData){
     const day=parseInt(d.date.split('-')[1]);
     return day+'일('+d.day+')';
   });
-  const pRevs=pData.map(d=>vex(d.revenue)/1e6);
+  // 환불/사후정산/아이파크몰 KCP 변동 조정값 - 일별 균등분배하여 차트에도 반영
+  const chartYmKey=ym(cur.year,cur.month);
+  const chartAdjEntry=monthAdj[chartYmKey];
+  const chartAdjMonthTotal=chartAdjEntry?(chartAdjEntry.refund||0)+(chartAdjEntry.settle||0)+(chartAdjEntry.kcp||0):0;
+  const chartAdjDaily=pData.length?chartAdjMonthTotal/pData.length:0;
+  const pRevs=pData.map(d=>vex(d.revenue)/1e6+(d.revenue>0?chartAdjDaily/1e6:0));
   const eRevs=eData.map(d=>d.revenue/1e6);
-  const pWeekly=calcWeekAvg(pData.map(d=>({revenue:vex(d.revenue)})));
+  const pWeekly=calcWeekAvg(pData.map(d=>({revenue:d.revenue>0?vex(d.revenue)+chartAdjDaily:0})));
   const eWeekly=calcWeekAvg(eData); // EV는 업로드 시점부터 VAT별도이므로 변환 불필요
 
   document.getElementById('parkWeekRow').innerHTML=pWeekly.map(v=>`<td>${v>0?(v/1e6).toFixed(1):'—'}</td>`).join('');
