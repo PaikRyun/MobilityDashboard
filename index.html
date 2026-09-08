@@ -1770,11 +1770,21 @@ function updateMobility(){
   document.getElementById('avgEvPerDevice').textContent = avgPerDevChg!=null ? avgPerDevChg.toFixed(1) : '—';
   
   // ── 일별 매출 비교 ──────────────────────────────────────────────────────
+  // 환불/사후정산/아이파크몰 KCP 조정값을 해당 월의 일할 계산으로 반영한 뒤 비교
+  // (현재월/전월 각각 자기 자신의 조정값을 사용 — 서로 다른 달의 조정값이 섞이지 않도록)
+  const adjDailyFor = (ymKey) => {
+    const entry = monthAdj[ymKey];
+    if(!entry) return 0;
+    const total = (entry.refund||0)+(entry.settle||0)+(entry.kcp||0);
+    const days = daysInMonthOf(ymKey);
+    return days ? total/days : 0;
+  };
 
   // 전일: 하루 전 (당월 1일이면 전월 말일)
   const prevDayP = dayIdx>0
     ? md.parking[dayIdx-1].revenue
     : (prevMd?prevMd.parking[prevMd.parking.length-1].revenue:null);
+  const prevDayYm = dayIdx>0 ? curYmKey : prevKey;
 
   // 전주: 7일 전 (이전 달 넘어가면 prevMd에서 찾기)
   let prevWeekP = null;
@@ -1784,6 +1794,7 @@ function updateMobility(){
     const prevMonthDayIdx = prevMd.parking.length + (day-7) - 1; // e.g. 6/1→5/25 = idx24
     if(prevMonthDayIdx>=0) prevWeekP = prevMd.parking[prevMonthDayIdx]?.revenue??null;
   }
+  const prevWeekYm = dayIdx>=7 ? curYmKey : prevKey;
 
   // 전월: 전월에서 오늘과 같은 요일들의 평균
   let prevMonthP = null;
@@ -1793,9 +1804,15 @@ function updateMobility(){
     if(sameDow.length>0) prevMonthP = sameDow.reduce((s,d)=>s+d.revenue,0)/sameDow.length;
   }
 
-  fmtPct(pct(pDay?.revenue,prevDayP),document.getElementById('cmpParkD'),pDay?.revenue,prevDayP);
-  fmtPct(pct(pDay?.revenue,prevWeekP),document.getElementById('cmpParkW'),pDay?.revenue,prevWeekP);
-  fmtPct(pct(pDay?.revenue,prevMonthP),document.getElementById('cmpParkM'),pDay?.revenue,prevMonthP);
+  // VAT별도 + 조정값(일할) 반영한 값으로 변환 (조정값은 이미 VAT별도 금액이므로 vex() 후 더함)
+  const curCmpAdj = pDay ? vex(pDay.revenue) + adjDailyFor(curYmKey) : null;
+  const prevDayCmpAdj = prevDayP!=null ? vex(prevDayP) + adjDailyFor(prevDayYm) : null;
+  const prevWeekCmpAdj = prevWeekP!=null ? vex(prevWeekP) + adjDailyFor(prevWeekYm) : null;
+  const prevMonthCmpAdj = (prevMonthP!=null && prevMd) ? vex(prevMonthP) + adjDailyFor(prevKey) : null;
+
+  fmtPct(pct(curCmpAdj,prevDayCmpAdj),document.getElementById('cmpParkD'),curCmpAdj,prevDayCmpAdj,false);
+  fmtPct(pct(curCmpAdj,prevWeekCmpAdj),document.getElementById('cmpParkW'),curCmpAdj,prevWeekCmpAdj,false);
+  fmtPct(pct(curCmpAdj,prevMonthCmpAdj),document.getElementById('cmpParkM'),curCmpAdj,prevMonthCmpAdj,false);
 
   // EV
   if(eDay){
