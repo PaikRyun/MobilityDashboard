@@ -2502,15 +2502,8 @@ async function downloadParkTemplate(){
   const wb=new ExcelJS.Workbook();
   const ws=wb.addWorksheet(y+'년 '+m+'월');
 
-  // 범례
-  ws.addRow(['🔴 빨강 헤더 = 필수 입력 컬럼 (비우거나 형식이 다르면 매출이 집계되지 않습니다)']);
-  ws.addRow(['⚪ 회색 헤더 = 선택 입력 컬럼 (참고용, 집계에는 사용되지 않습니다)']);
-  ws.addRow([]);
-  const legend1=ws.getRow(1).getCell(1); legend1.font={bold:true, color:{argb:TMPL_REQUIRED_FONT}};
-  const legend2=ws.getRow(2).getCell(1); legend2.font={bold:true, color:{argb:TMPL_OPTIONAL_FONT}};
-
-  // 헤더 행
-  const headerRowIdx=4;
+  // 헤더는 항상 1행에 위치 (안내문구를 위에 두면 키워드 오인식 위험이 있어 아래로 이동)
+  const headerRowIdx=1;
   const headerRow=ws.getRow(headerRowIdx);
   headers.forEach((h,i)=>{ headerRow.getCell(i+1).value=h; styleHeaderCell(headerRow.getCell(i+1), requiredFlags[i]); });
   dayHeaders.forEach((h,i)=>{ const c=headerRow.getCell(headers.length+1+i); c.value=h; styleHeaderCell(c, true); }); // 일자 매출 컬럼 = 필수
@@ -2525,6 +2518,10 @@ async function downloadParkTemplate(){
   });
 
   ws.addRow([]);
+  const legend1=ws.addRow(['🔴 빨강 헤더 = 필수 입력 컬럼 (비우거나 형식이 다르면 매출이 집계되지 않습니다)']);
+  legend1.getCell(1).font={bold:true, color:{argb:TMPL_REQUIRED_FONT}};
+  const legend2=ws.addRow(['⚪ 회색 헤더 = 선택 입력 컬럼 (참고용, 집계에는 사용되지 않습니다)']);
+  legend2.getCell(1).font={bold:true, color:{argb:TMPL_OPTIONAL_FONT}};
   const noteRow=ws.addRow(['※ 시트명은 "YYYY년 M월" 형식 필수 / B열 비어있으면 해당 행 무시 / H열 "구분"이 정확히 "합계"인 행만 매출 집계 / E열 "구분" 값에 대형·대학교 포함 시 개별 주차장으로 별도 추출됩니다 / F열(계약연도)은 참고용이며 집계에는 사용되지 않습니다']);
   noteRow.getCell(1).font={italic:true, color:{argb:'FFDC2626'}, size:10};
 
@@ -2546,13 +2543,8 @@ async function downloadEvTemplate(){
   const wb=new ExcelJS.Workbook();
   const ws=wb.addWorksheet('Sheet1');
 
-  ws.addRow(['🔴 빨강 헤더 = 필수 입력 컬럼 (비우거나 형식이 다르면 매출/충전량이 집계되지 않습니다)']);
-  ws.addRow(['⚪ 회색 헤더 = 선택 입력 컬럼 (참고용, 기상 카드 등에만 사용됩니다)']);
-  ws.addRow([]);
-  ws.getRow(1).getCell(1).font={bold:true, color:{argb:TMPL_REQUIRED_FONT}};
-  ws.getRow(2).getCell(1).font={bold:true, color:{argb:TMPL_OPTIONAL_FONT}};
-
-  const headerRowIdx=4;
+  // 헤더는 항상 1행에 위치 (안내문구를 위에 두면 키워드 오인식 위험이 있어 아래로 이동)
+  const headerRowIdx=1;
   const headerRow=ws.getRow(headerRowIdx);
   headers.forEach((h,i)=>{ headerRow.getCell(i+1).value=h; styleHeaderCell(headerRow.getCell(i+1), requiredFlags[i]); });
   headerRow.commit();
@@ -2571,6 +2563,10 @@ async function downloadEvTemplate(){
   }
 
   ws.addRow([]);
+  const legend1=ws.addRow(['🔴 빨강 헤더 = 필수 입력 컬럼 (비우거나 형식이 다르면 매출/충전량이 집계되지 않습니다)']);
+  legend1.getCell(1).font={bold:true, color:{argb:TMPL_REQUIRED_FONT}};
+  const legend2=ws.addRow(['⚪ 회색 헤더 = 선택 입력 컬럼 (참고용, 기상 카드 등에만 사용됩니다)']);
+  legend2.getCell(1).font={bold:true, color:{argb:TMPL_OPTIONAL_FONT}};
   const noteRow=ws.addRow(['※ 날짜열(B열)은 반드시 날짜 형식(YYYY-MM-DD)으로 입력 / 헤더에 "충전량"이 들어간 열이 총 충전량으로 인식되며 "건당·기당"이 포함된 열은 제외됩니다']);
   noteRow.getCell(1).font={italic:true, color:{argb:'FFDC2626'}, size:10};
 
@@ -2732,17 +2728,29 @@ function processEvRaw(file){
       let rowCount=0;
       const affectedMonths=new Set();
 
-      // Sheet1 또는 첫 번째 시트 사용
-      const sn=wb.SheetNames.find(s=>s==='Sheet1')||wb.SheetNames[0];
+      // EV라는 이름이 포함된 시트 우선 사용 → 없으면 'Sheet1' → 그래도 없으면 첫 번째 시트
+      const sn=wb.SheetNames.find(s=>s.toUpperCase().includes('EV'))
+        ||wb.SheetNames.find(s=>s==='Sheet1')
+        ||wb.SheetNames[0];
       if(!sn){alert('❌ EV 파일: 시트를 찾을 수 없습니다');return;}
       const ws=wb.Sheets[sn];
       const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,cellDates:true});
 
-      // 헤더 행 찾기 (날짜/충전량 포함)
-      let hIdx=rows.findIndex(row=>row&&row.some(c=>{
-        const s=String(c||'');
-        return s.includes('날짜')||s.includes('충전량')||s.includes('기기수');
-      }));
+      // 헤더 행 찾기 (날짜/충전량/기기수 등 키워드가 "서로 다른 셀" 2개 이상에 나타나는 행만 인정)
+      // 안내문구 한 줄에 여러 키워드가 우연히 섞여있는 경우(예: 샘플 양식 안내문)를 헤더로 오인하지 않도록 방지
+      let hIdx=rows.findIndex(row=>{
+        if(!row)return false;
+        let cellMatches=0;
+        row.forEach(c=>{
+          const s=String(c||'');
+          if(s.includes('날짜')||s.includes('요일')||s.includes('기기수')||
+             s.includes('충전량')||s.includes('충전건수')||s.includes('매출')||
+             s.includes('최저')||s.includes('최고')||s.includes('강수')){
+            cellMatches++;
+          }
+        });
+        return cellMatches>=2;
+      });
       if(hIdx<0)hIdx=3; // 기본 4행
 
       // 컬럼 인덱스 자동 감지
@@ -2820,6 +2828,11 @@ function processEvRaw(file){
       annualDrawn=false;
       updateMobility();
 
+      if(rowCount===0){
+        alert(`⚠️ EV RAW 업로드: 처리된 행이 0개입니다.\n선택하신 시트("${sn}")에서 날짜/충전량 데이터를 찾지 못했습니다.\n파일 구조를 확인하거나, 다른 시트가 있다면 시트명에 'EV'가 포함되어 있는지 확인해주세요.`);
+        return;
+      }
+
       let cloudMsg='';
       if(fbReady && adminUnlocked){
         for(const ym of affectedMonths){ await fbSaveMonth(ym); }
@@ -2827,7 +2840,7 @@ function processEvRaw(file){
       } else {
         cloudMsg='\n⚠️ 관리자로 로그인되어 있지 않아 이 브라우저에만 반영되었습니다. 서버에 반영하려면 관리자 로그인 후 다시 업로드하세요.';
       }
-      alert(`✅ EV RAW 업로드 완료!\n처리 행: ${rowCount}개${cloudMsg}`);
+      alert(`✅ EV RAW 업로드 완료! (시트: "${sn}")\n처리 행: ${rowCount}개${cloudMsg}`);
     }catch(err){
       console.error(err);
       alert('❌ EV 파일 오류: '+err.message);
