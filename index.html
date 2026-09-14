@@ -2444,6 +2444,71 @@ function loadLots(){ /* Firestore로 대체됨 - fbLoadAll()에서 일괄 로드
 // - 보기: 누구나 가능 (읽기 전용)
 // - 쓰기: firestore.rules에 등록된 관리자 이메일로 로그인한 사용자만 (Firestore 보안 규칙으로 서버단 강제)
 // ═══════════════════════════════════════════
+// ═══════════════════════════════════════════
+// 내장 데이터(제가 파일에 넣어드린 것) 우선 병합
+// - 일자별로 "내장 데이터에 실제 매출(>0)이 있으면 그대로 사용"
+// - "내장 데이터가 없거나 0인 날짜만" Firebase 값으로 채워넣음
+// - Firebase에 남은 테스트/과거 데이터가 최신 내장 데이터를 덮어쓰지 않도록 방지
+// ═══════════════════════════════════════════
+function mergeMonthData(mine, theirs){
+  if(!mine) return theirs;
+  if(!theirs) return mine;
+  const daysLen=Math.max((mine.parking||[]).length, (theirs.parking||[]).length);
+  const mergedParking=[];
+  for(let i=0;i<daysLen;i++){
+    const mp=mine.parking&&mine.parking[i];
+    const tp=theirs.parking&&theirs.parking[i];
+    if(mp&&mp.revenue>0) mergedParking.push(mp);
+    else if(tp) mergedParking.push(tp);
+    else mergedParking.push(mp||tp||{date:'',day:'',revenue:0});
+  }
+  const mergedByType={};
+  const allTypes=new Set([...Object.keys(mine.parkingByType||{}), ...Object.keys(theirs.parkingByType||{})]);
+  allTypes.forEach(ct=>{
+    const mArr=(mine.parkingByType&&mine.parkingByType[ct])||[];
+    const tArr=(theirs.parkingByType&&theirs.parkingByType[ct])||[];
+    const len=Math.max(mArr.length,tArr.length,daysLen);
+    const arr=[];
+    for(let i=0;i<len;i++){
+      const mv=mArr[i]||0, tv=tArr[i]||0;
+      arr.push(mv>0?mv:tv);
+    }
+    mergedByType[ct]=arr;
+  });
+  const evMap={};
+  (theirs.ev||[]).forEach(e=>{ evMap[e.date]=e; });
+  (mine.ev||[]).forEach(e=>{
+    const existing=evMap[e.date];
+    if((e.revenue>0)||!existing) evMap[e.date]=e;
+  });
+  const mergedEv=Object.values(evMap).sort((a,b)=>a.date.localeCompare(b.date));
+  return { parking: mergedParking, parkingByType: mergedByType, ev: mergedEv };
+}
+function mergeLotsData(mineLots, theirsLots){
+  if(!mineLots||!mineLots.length) return theirsLots||[];
+  if(!theirsLots||!theirsLots.length) return mineLots;
+  const keyOf=l=>(l.siteName||l.name)+'__'+l.ct;
+  const result=[];
+  const seen=new Set();
+  mineLots.forEach(ml=>{
+    const key=keyOf(ml);
+    seen.add(key);
+    const tl=theirsLots.find(t=>keyOf(t)===key);
+    if(!tl){ result.push(ml); return; }
+    const len=Math.max(ml.days.length, tl.days.length);
+    const days=[];
+    for(let i=0;i<len;i++){
+      const mv=ml.days[i]||0, tv=tl.days[i]||0;
+      days.push(mv>0?mv:tv);
+    }
+    result.push(Object.assign({}, ml, {days}));
+  });
+  theirsLots.forEach(tl=>{
+    if(!seen.has(keyOf(tl))) result.push(tl);
+  });
+  return result;
+}
+
 async function fbLoadAll(){
   if(!fbReady || !fbDb) return;
   try{
@@ -2451,9 +2516,9 @@ async function fbLoadAll(){
     const months = idxSnap.exists ? (idxSnap.data().months||[]) : [];
     for(const ym of months){
       const mSnap = await fbDb.collection('months').doc(ym).get();
-      if(mSnap.exists) ALL_DATA[ym] = mSnap.data();
+      if(mSnap.exists) ALL_DATA[ym] = mergeMonthData(ALL_DATA[ym], mSnap.data());
       const lSnap = await fbDb.collection('lots').doc(ym).get();
-      if(lSnap.exists) uploadedLots[ym] = lSnap.data().lots||[];
+      if(lSnap.exists) uploadedLots[ym] = mergeLotsData(uploadedLots[ym], lSnap.data().lots||[]);
     }
     recomputeMonthRange();
 
@@ -3327,14 +3392,17 @@ function renderManualList(){
     tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--gray500);padding:24px">입력된 수기매출이 없습니다</td></tr>';
     return;
   }
-  tbody.innerHTML=manualData.map(d=>`
-    <tr>
-      <td style="font-weight:600">${d.date}</td>
+  tbody.innerHTML=manualData.map(d=>{
+    const superseded=manualDateHasRealData(d.date, d.type);
+    return `
+    <tr style="${superseded?'opacity:.55':''}">
+      <td style="font-weight:600">${d.date}${superseded?' <span style="font-size:10px;font-weight:800;color:white;background:#94a3b8;padding:1px 7px;border-radius:100px;margin-left:4px">RAW 대체됨·미반영</span>':''}</td>
       <td><span class="${d.type==='parking'?'badge-park':'badge-ev'}">${d.type==='parking'?'🅿️ 주차':'⚡ EV'}</span></td>
       <td style="text-align:right;font-weight:700;color:var(--navy)">${d.amount.toLocaleString()}원</td>
       <td style="color:var(--gray700)">${d.memo||'—'}</td>
       <td style="text-align:center"><button class="btn-del" onclick="delManual(${d.id})">삭제</button></td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 // 반영 토글
@@ -3354,14 +3422,32 @@ function updateToggleLabel(){
 }
 
 // 수기매출 조회 헬퍼 (날짜 범위)
+// 이미 RAW 데이터가 들어온 날짜는 수기매출을 자동으로 제외 (이중 합산 방지)
+function manualDateHasRealData(dateStr, type){
+  const parts=dateStr.split('-').map(Number);
+  const y=parts[0], mo=parts[1], da=parts[2];
+  const ymKey=ym(y,mo);
+  const md=ALL_DATA[ymKey];
+  if(!md) return false;
+  if(type==='parking'){
+    const rec=md.parking&&md.parking[da-1];
+    return !!(rec && rec.revenue>0);
+  } else {
+    const mmdd=String(mo).padStart(2,'0')+'-'+String(da).padStart(2,'0');
+    const rec=md.ev&&md.ev.find(e=>e.date===mmdd);
+    return !!(rec && rec.revenue>0);
+  }
+}
 function getManualSum(dateStart, dateEnd, type){
   if(!manualOn||!manualData.length)return 0;
   return manualData
     .filter(d=>d.type===type&&d.date>=dateStart&&d.date<=dateEnd)
+    .filter(d=>!manualDateHasRealData(d.date, type))
     .reduce((s,d)=>s+d.amount,0);
 }
 function getManualDay(dateStr, type){
   if(!manualOn||!manualData.length)return 0;
+  if(manualDateHasRealData(dateStr, type))return 0;
   return manualData.filter(d=>d.type===type&&d.date===dateStr).reduce((s,d)=>s+d.amount,0);
 }
 
