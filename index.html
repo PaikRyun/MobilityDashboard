@@ -4313,7 +4313,7 @@ const SITE_COLS = [
   {key:'pWeAvg',label:'전월 주말평균', align:'right'}
 ];
 
-const SITE_ACCESS_PW = 'nicepark2026';
+const SITE_ACCESS_PW = '2026';
 let siteAccessUnlocked = (sessionStorage.getItem('siteAccessUnlocked')==='1');
 
 function openSiteAccessModal(){
@@ -4565,11 +4565,14 @@ function siteRender(){
       avgDiffMoM:(stats.avg!=null&&prevStats.avg!=null)?stats.avg-prevStats.avg:null,
       wdDiffMoM:(stats.wdAvg!=null&&prevStats.wdAvg!=null)?stats.wdAvg-prevStats.wdAvg:null,
       weDiffMoM:(stats.weAvg!=null&&prevStats.weAvg!=null)?stats.weAvg-prevStats.weAvg:null,
+      wkAvgDiff:wk?wk.avgDiff:null, wkWdDiff:wk?wk.wdDiff:null, wkWeDiff:wk?wk.weDiff:null,
       wk
     });
   });
 
   // 정렬: 기본은 계약유형(SITE_TYPES 순서) → 계약기간(연도) 오름차순
+  // 월평균/평일평균/주말평균 컬럼은 값 자체가 아니라 "전주대비 증감액" 기준으로 정렬
+  const SITE_SORT_FIELD_MAP={avg:'wkAvgDiff', wdAvg:'wkWdDiff', weAvg:'wkWeDiff'};
   const typeOrderIdx=t=>{ const i=SITE_TYPES.indexOf(t); return i<0?999:i; };
   withStats.sort((a,b)=>{
     if(siteSortCol==='default'){
@@ -4585,7 +4588,8 @@ function siteRender(){
     if(siteSortCol==='name'){
       return a.name.localeCompare(b.name,'ko')*siteSortDir;
     }
-    const av=a[siteSortCol], bv=b[siteSortCol];
+    const sortField=SITE_SORT_FIELD_MAP[siteSortCol]||siteSortCol;
+    const av=a[sortField], bv=b[sortField];
     if(av==null&&bv==null)return 0;
     if(av==null)return 1; // null은 항상 뒤로
     if(bv==null)return -1;
