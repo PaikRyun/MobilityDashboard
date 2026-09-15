@@ -2861,6 +2861,12 @@ function processParkingRaw(file){
       const affectedMonths=new Set();
 
       wb.SheetNames.forEach(sn=>{
+        // "비교" 시트(주차장코드가 세로 아닌 가로로 배치된 전혀 다른 구조)와
+        // "_재집계 전"(수정되기 전 구버전) 시트는 정상 데이터로 오인식될 위험이 있어 건너뜁니다.
+        if(/비교/.test(sn) || /재집계\s*전/.test(sn)){
+          sheetLog.push(`"${sn}": 비교/재집계전 시트라 건너뜀`);
+          return;
+        }
         const ws=wb.Sheets[sn];
         const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:null});
 
