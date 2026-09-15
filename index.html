@@ -1305,6 +1305,12 @@ input[type=file]{display:none}
     <div style="font-size:12px;color:#94a3b8" id="siteCountLabel"></div>
   </div>
 
+  <!-- 이번 달 신규 SITE 요약 -->
+  <div id="siteNewPanel" style="background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:14px;padding:14px 18px;margin-bottom:14px">
+    <div id="siteNewPanelTitle" style="font-size:13px;font-weight:800;color:#166534;margin-bottom:10px"></div>
+    <div id="siteNewPanelBody" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+  </div>
+
   <!-- 유형 필터 칩 -->
   <div id="siteTypeChips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px"></div>
 
@@ -4553,6 +4559,44 @@ function siteRenderChips(){
     return `<button class="site-chip ${on?'on':''}" onclick="siteToggleType('${t}',this)" style="${style}">${t}</button>`;
   }).join('');
 }
+// 선택한 기준월의 신규 SITE를 카드 형태로 항상 보여줍니다 (월을 바꿀 때마다 갱신)
+function siteRenderNewPanel(ymKey){
+  const titleEl=document.getElementById('siteNewPanelTitle');
+  const bodyEl=document.getElementById('siteNewPanelBody');
+  const panel=document.getElementById('siteNewPanel');
+  if(!titleEl||!bodyEl||!panel) return;
+  const [yy,mm]=ymKey.split('-').map(Number);
+  const daysInM=daysInMonthOf(ymKey);
+  const list=siteNewListOf(ymKey).filter(l=>siteSelectedTypes.has(l.ct));
+  const byType={};
+  list.forEach(l=>{ byType[l.ct]=(byType[l.ct]||0)+1; });
+  const typeSummary=SITE_TYPES.filter(t=>byType[t]).map(t=>t+' '+byType[t]).join(' · ');
+
+  if(!list.length){
+    panel.style.background='#f8fafc'; panel.style.borderColor='#e2e8f0';
+    titleEl.style.color='#64748b';
+    titleEl.textContent='🆕 '+yy+'년 '+mm+'월 신규 SITE — 없음';
+    bodyEl.innerHTML='<div style="font-size:12px;color:#94a3b8">이 달에 처음 매출이 발생한 대형·대학교·매입·광명역·공항철도 주차장이 없습니다.'
+      + (siteTypeStartCache && siteTypeStartCache['대형']===ymKey ? ' (데이터가 처음 수집된 달이라 신규 판정에서 제외됩니다)' : '')
+      + '</div>';
+    return;
+  }
+  panel.style.background='#f0fdf4'; panel.style.borderColor='#bbf7d0';
+  titleEl.style.color='#166534';
+  titleEl.textContent='🆕 '+yy+'년 '+mm+'월 신규 SITE '+list.length+'개'+(typeSummary?'  ('+typeSummary+')':'');
+  bodyEl.innerHTML=list.map(l=>{
+    let firstDay=null, total=0;
+    for(let d=1; d<=daysInM; d++){
+      const v=(l.days&&l.days[d-1])||0;
+      if(v>0){ if(firstDay===null) firstDay=d; total+=vex(v); }
+    }
+    return '<div style="background:white;border:1px solid #bbf7d0;border-radius:10px;padding:8px 12px;min-width:170px">'
+      + '<div style="font-size:9.5px;font-weight:800;color:white;background:'+(SITE_CHIP_COLORS[l.ct]||'#16a34a')+';display:inline-block;padding:1.5px 7px;border-radius:100px;margin-bottom:4px">'+l.ct+'</div>'
+      + '<div style="font-size:12.5px;font-weight:700;color:#0f1b2d;line-height:1.3">'+siteNormName(l)+'</div>'
+      + '<div style="font-size:10.5px;color:#64748b;margin-top:3px">첫 매출 '+mm+'/'+(firstDay||'-')+' · 월 '+siteFmtWon(total)+'</div>'
+      + '</div>';
+  }).join('');
+}
 let siteNewOnly=false;
 function siteToggleNewOnly(){
   siteNewOnly=!siteNewOnly;
@@ -4565,6 +4609,11 @@ function siteToggleNewOnly(){
 function siteInit(){
   const sel=document.getElementById('siteMonthSel');
   if(!sel)return;
+  if(siteInited){
+    // 상단 달력/월 이동으로 기준월이 바뀐 경우 SITE 화면 월 선택기도 맞춰줍니다
+    const curKey=ym(cur.year,cur.month);
+    if(sel.value!==curKey && Array.prototype.some.call(sel.options,o=>o.value===curKey)) sel.value=curKey;
+  }
   if(!siteInited){
     sel.innerHTML=MONTHS_ORDER.slice().reverse().map(ymv=>`<option value="${ymv}">${ymv}</option>`).join('');
     sel.value=ym(cur.year,cur.month);
@@ -4700,31 +4749,42 @@ function dedupeAllLots(){
 // - 대형 / 대학교 / 매입 / 광명역 / 공항철도 대상
 // - 데이터가 처음 수집된 달(그 유형의 최초 월)은 전부 신규로 잡히므로 제외합니다
 // ═══════════════════════════════════════════
-let siteFirstMonthCache=null, siteTypeStartCache=null;
+let siteFirstMonthCache=null, siteTypeStartCache=null, siteCodeFirstCache=null;
 function siteInvalidateCaches(){
-  siteFirstMonthCache=null; siteTypeStartCache=null;
+  siteFirstMonthCache=null; siteTypeStartCache=null; siteCodeFirstCache=null;
   siteYearMapCache=null; siteYearMapKey=null;
 }
+// 모든 월을 훑어 "이름 기준 최초 매출월", "주차장코드 기준 최초 매출월",
+// "유형별 데이터 최초 수집월" 세 가지를 한 번에 만들어 캐시합니다.
 function siteBuildFirstMonthMap(){
   if(siteFirstMonthCache) return siteFirstMonthCache;
-  const first={}, typeStart={};
+  const first={}, firstCode={}, typeStart={};
   Object.keys(uploadedLots).sort().forEach(k=>{
     (uploadedLots[k]||[]).forEach(l=>{
       if(!l || !l.days) return;
       let sum=0; for(let i=0;i<l.days.length;i++) sum+=(l.days[i]||0);
       if(sum<=0) return;
-      const kk=l.ct+'|'+siteNormName(l);
-      if(!first[kk]) first[kk]=k;
+      const nk=l.ct+'|'+siteNormName(l);
+      if(!first[nk]) first[nk]=k;
+      if(l.code){
+        const ck=l.ct+'|'+l.code;
+        if(!firstCode[ck]) firstCode[ck]=k;
+      }
       if(!typeStart[l.ct]) typeStart[l.ct]=k;
     });
   });
-  siteFirstMonthCache=first; siteTypeStartCache=typeStart;
+  siteFirstMonthCache=first; siteCodeFirstCache=firstCode; siteTypeStartCache=typeStart;
   return first;
 }
 function siteIsNew(l, ymKey){
-  const first=siteBuildFirstMonthMap();
-  if(first[l.ct+'|'+siteNormName(l)] !== ymKey) return false;
-  if(siteTypeStartCache[l.ct] === ymKey) return false; // 해당 유형의 최초 수집월은 제외
+  siteBuildFirstMonthMap();
+  // 해당 유형의 데이터가 처음 수집된 달은 전부 신규로 잡히므로 제외
+  if(siteTypeStartCache[l.ct] === ymKey) return false;
+  // ① 이름 기준으로 이번 달이 최초 매출월이어야 함
+  if(siteFirstMonthCache[l.ct+'|'+siteNormName(l)] !== ymKey) return false;
+  // ② 주차장코드가 있으면 코드 기준으로도 최초여야 함
+  //    (이름만 바뀐 기존 주차장이 신규로 잘못 잡히는 것을 막아줍니다)
+  if(l.code && siteCodeFirstCache[l.ct+'|'+l.code] !== ymKey) return false;
   return true;
 }
 function siteNewListOf(ymKey){
@@ -4733,6 +4793,14 @@ function siteNewListOf(ymKey){
     if(SITE_TYPES.indexOf(l.ct)>=0 && siteIsNew(l,ymKey)) out.push(l);
   });
   return out;
+}
+// 어느 달에 신규가 몇 건인지 한 번에 확인하고 싶을 때 (F12 콘솔에서 siteNewSummary() 실행)
+function siteNewSummary(){
+  siteBuildFirstMonthMap();
+  const rows=Object.keys(uploadedLots).sort().map(k=>k+' : '+siteNewListOf(k).length+'건');
+  console.log('[신규 SITE 월별 요약]\n'+rows.join('\n'));
+  console.log('[유형별 데이터 최초 수집월]', siteTypeStartCache);
+  return rows;
 }
 // 계약연도 정보가 없는 달(대부분의 과거 월)에도, 가장 최근에 계약연도가 채워진 달의 데이터를 찾아
 // 같은 이름+유형의 주차장이면 그 계약연도를 그대로 가져와서 보여줍니다.
@@ -4840,6 +4908,7 @@ function siteRender(){
   let filtered=lots.filter(l=>siteSelectedTypes.has(l.ct));
   if(searchText) filtered=filtered.filter(l=>l.name.toLowerCase().includes(searchText));
   const newCount=filtered.filter(l=>siteIsNew(l,ymKey)).length;
+  siteRenderNewPanel(ymKey);
   if(siteNewOnly) filtered=filtered.filter(l=>siteIsNew(l,ymKey));
 
   const withStats=filtered.map(l=>{
