@@ -2970,8 +2970,36 @@ function processParkingRaw(file){
         });
         if(lots.length>0){
           const ex=uploadedLots[key]||[];
-          const nm=new Set(lots.map(l=>l.name));
-          uploadedLots[key]=[...ex.filter(l=>!nm.has(l.name)),...lots];
+          // 이름 기준으로 일자별 병합: 새로 올린 값이 있으면(>0) 그 값을 쓰고,
+          // 새 파일에 없거나 0인 날짜는 기존에 있던 값을 그대로 유지합니다.
+          // (기존 방식은 이름이 같으면 통째로 교체해서, 새 파일에 없는 전주 등 예전 날짜 데이터가 사라지는 문제가 있었습니다)
+          const exMap={};
+          ex.forEach(l=>{ exMap[siteNormName(l)+'|'+l.ct]=l; });
+          const mergedNames=new Set();
+          const merged=lots.map(newL=>{
+            const k=siteNormName(newL)+'|'+newL.ct;
+            mergedNames.add(k);
+            const oldL=exMap[k];
+            if(!oldL) return newL;
+            const len=Math.max(oldL.days.length, newL.days.length);
+            const days=[];
+            for(let i=0;i<len;i++){
+              const nv=newL.days[i]||0, ov=oldL.days[i]||0;
+              days.push(nv>0?nv:ov);
+            }
+            return Object.assign({}, oldL, newL, {
+              days,
+              code: newL.code||oldL.code,
+              yearLabel: newL.yearLabel||oldL.yearLabel,
+              year: newL.yearLabel?newL.year:oldL.year
+            });
+          });
+          // 새 업로드에 없던(기존에만 있던) 주차장은 그대로 보존
+          ex.forEach(l=>{
+            const k=siteNormName(l)+'|'+l.ct;
+            if(!mergedNames.has(k)) merged.push(l);
+          });
+          uploadedLots[key]=merged;
           lotCount+=lots.length;
         }
         affectedMonths.add(key);
