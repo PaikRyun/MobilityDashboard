@@ -726,8 +726,8 @@ input[type=file]{display:none}
   <span id="adminStatusBadge" style="display:none"></span>
   <div class="topbar-right">
     <button class="btn-icon" onclick="printDashboard()" style="background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.3)" title="현재 화면 인쇄/PDF 저장">🖨️ 인쇄</button>
-    <button class="btn-icon green" onclick="downloadData()">💾 백업</button>
-    <button class="btn-icon" onclick="exportExcel()" style="background:rgba(5,150,105,.25);border-color:rgba(16,185,129,.4)" title="현재 데이터 Excel 출력">📊 Excel 출력</button>
+    <button class="btn-icon green" data-admin-export="1" onclick="downloadData()">💾 백업</button>
+    <button class="btn-icon" data-admin-export="1" onclick="exportExcel()" style="background:rgba(5,150,105,.25);border-color:rgba(16,185,129,.4)" title="현재 데이터 Excel 출력">📊 Excel 출력</button>
     <button class="btn-icon blue" onclick="document.getElementById('backupInput').click()">📂 복원</button>
     <input type="file" id="parkRawInput" accept=".xlsx,.xls">
     <input type="file" id="evRawInput" accept=".xlsx,.xls">
@@ -752,8 +752,8 @@ input[type=file]{display:none}
   <button class="raw-popup-btn" onclick="document.getElementById('parkRawInput').click()">🅿️ 주차 RAW 업로드</button>
   <button class="raw-popup-btn ev" onclick="document.getElementById('evRawInput').click()">⚡ EV RAW 업로드</button>
   <div class="raw-popup-divider"></div>
-  <button class="raw-popup-btn tmpl" onclick="downloadParkTemplate()">📥 주차 업로드 양식 다운로드</button>
-  <button class="raw-popup-btn tmpl" onclick="downloadEvTemplate()">📥 EV 업로드 양식 다운로드</button>
+  <button class="raw-popup-btn tmpl" data-admin-export="1" onclick="downloadParkTemplate()">📥 주차 업로드 양식 다운로드</button>
+  <button class="raw-popup-btn tmpl" data-admin-export="1" onclick="downloadEvTemplate()">📥 EV 업로드 양식 다운로드</button>
 </div>
 
 <!-- Tab Navigation -->
@@ -1202,7 +1202,7 @@ input[type=file]{display:none}
           <div style="font-size:15px;font-weight:800;color:white;display:flex;align-items:center;gap:6px">📦 실무자 엑셀 통합 다운로드</div>
           <div style="font-size:12px;color:#a9c7e0;margin-top:3px">상단 "기준 월"이 속한 연도/월 기준으로, 아래 모든 양식을 시트별로 담은 엑셀 1개를 받습니다</div>
         </div>
-        <div style="font-size:13px;font-weight:700;color:#0f1b2d;background:white;padding:9px 18px;border-radius:8px;white-space:nowrap">엑셀 다운로드 ⬇</div>
+        <div style="font-size:13px;font-weight:700;color:#0f1b2d;background:white;padding:9px 18px;border-radius:8px;white-space:nowrap" data-admin-export="1">엑셀 다운로드 ⬇</div>
       </div>
     </div>
   </div>
@@ -1597,7 +1597,35 @@ try{
 // 관리자 로그인 상태 표시 (상단바 배지)
 // - 자체 로그인(adminUnlocked)이 기준. 새로고침하면 다시 로그인해야 합니다.
 // ═══════════════════════════════════════════
+// ═══════════════════════════════════════════
+// [보안] 모든 엑셀 출력 / 백업 다운로드는 관리자 로그인 필요
+//  - exportExcel()            : 📊 Excel 출력
+//  - pkRunCombinedExport()    : 📦 실무자 엑셀 통합 다운로드
+//  - downloadParkTemplate()   : 📥 주차 업로드 양식
+//  - downloadEvTemplate()     : 📥 EV 업로드 양식
+//  - downloadData()           : 💾 백업(JSON)
+// ═══════════════════════════════════════════
+function requireAdminForExport(what){
+  if(adminUnlocked) return true;
+  showToast('🔒 '+(what||'다운로드')+'은(는) 관리자 로그인 후 이용할 수 있습니다.', 'error');
+  try{ openAdmin(null); }catch(e){}
+  return false;
+}
+// 로그인 상태에 따라 다운로드 버튼을 흐리게/선명하게 표시
+function refreshExportLockUI(){
+  const locked = !adminUnlocked;
+  document.querySelectorAll('[data-admin-export]').forEach(el=>{
+    if(!el.hasAttribute('data-admin-label')) el.setAttribute('data-admin-label', el.textContent.trim());
+    const base = el.getAttribute('data-admin-label');
+    el.style.opacity = locked ? '0.55' : '1';
+    el.title = locked ? '관리자 로그인 후 다운로드할 수 있습니다' : '';
+    el.textContent = locked ? '🔒 ' + base : base;
+  });
+  const note=document.getElementById('pkExportLockNote');
+  if(note) note.style.display = locked ? 'block' : 'none';
+}
 function updateAdminBadge(){
+  setTimeout(refreshExportLockUI, 0);
   const badge=document.getElementById('adminStatusBadge');
   if(!badge)return;
   if(adminUnlocked){
@@ -2534,6 +2562,7 @@ function drawAnnualChart(){
 }
 
 function downloadData(){
+  if(!requireAdminForExport('백업 파일 다운로드')) return;
   const j=JSON.stringify({all:ALL_DATA,lots:uploadedLots},null,2);
   const b=new Blob([j],{type:'application/json'});
   const u=URL.createObjectURL(b);
@@ -2768,6 +2797,7 @@ function styleHeaderCell(cell, required){
 }
 
 async function downloadParkTemplate(){
+  if(!requireAdminForExport('주차 업로드 양식 다운로드')) return;
   const y=cur.year, m=cur.month;
   const daysInMonth=new Date(y, m, 0).getDate();
   const headers=['순번','주차장코드','주차장명','지역','구분','계약연도','비고','구분(합계)'];
@@ -2824,6 +2854,7 @@ async function downloadParkTemplate(){
 }
 
 async function downloadEvTemplate(){
+  if(!requireAdminForExport('EV 업로드 양식 다운로드')) return;
   const y=cur.year, m=cur.month;
   const daysInMonth=new Date(y, m, 0).getDate();
   const headers=['순번','날짜','요일','기기수','충전량(kWh)','충전건수','당사매출(원, VAT별도)','최저기온(℃)','최고기온(℃)','강수량(mm)'];
@@ -3781,6 +3812,9 @@ window.addEventListener('load',async()=>{
   // 내장 데이터에 이미 섞여 있던 예전/현재 형식 중복분까지 한 번에 정리
   dedupeAllLots();
 
+  // 다운로드 버튼 잠금 표시 반영 (관리자 로그인 전에는 🔒)
+  refreshExportLockUI();
+
   loadLots();
   loadAdminData();
   loadMonthAdj();
@@ -4104,6 +4138,7 @@ function pkRenderMemo2() {
 
 // ── Excel 출력 ────────────────────────────────────────────────────────
 function exportExcel(){
+  if(!requireAdminForExport('Excel 출력')) return;
   const targetYM=ym(cur.year,cur.month);
   const md=ALL_DATA[targetYM];
   if(!md){alert('데이터 없음');return;}
@@ -5637,6 +5672,7 @@ function pkToggleExportPanel(){
 }
 
 async function pkRunCombinedExport(){
+  if(!requireAdminForExport('실무자 엑셀 통합 다운로드')) return;
   const sel=document.getElementById('pkMonthSel');
   const ymKey=sel?sel.value:ym(cur.year,cur.month);
   if(!ymKey||!ALL_DATA[ymKey]){
