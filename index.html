@@ -1096,21 +1096,22 @@ input[type=file]{display:none}
   </div>
 
   <div class="chart-card" style="margin-bottom:16px">
-    <div class="chart-card-title"><span class="chart-dot blue"></span>요일별 매출 추이 (주차 · EV, VAT별도, 단위: 백만원)</div>
-    <div style="position:relative;height:260px;padding:12px">
+    <div class="chart-card-title"><span class="chart-dot blue"></span>요일별 매출 추이 — 이번주 vs 전주 (VAT별도·조정반영, 단위: 백만원)</div>
+    <div style="font-size:11.5px;color:#94a3b8;padding:0 12px 4px">진한 막대가 이번주, 연한 막대가 전주입니다. 주차 금액에는 환불·사후정산·KCP 조정이 일할 반영되어 있습니다.</div>
+    <div style="position:relative;height:300px;padding:12px">
       <canvas id="weekChart"></canvas>
     </div>
   </div>
 
-  <div class="row-2col">
-    <div class="chart-card">
-      <div class="chart-card-title"><span class="chart-dot blue"></span>주차장 유형별 매출 (이번주 합계)</div>
-      <div style="overflow-x:auto"><table class="mon-table" id="weekTypeTable" style="width:100%"></table></div>
-    </div>
-    <div class="chart-card">
-      <div class="chart-card-title"><span class="chart-dot green"></span>요일별 상세 (주차 / EV, 단위: 천원)</div>
-      <div style="overflow-x:auto"><table class="mon-table" id="weekDayTable" style="width:100%"></table></div>
-    </div>
+  <div class="chart-card" style="margin-bottom:16px">
+    <div class="chart-card-title"><span class="chart-dot green"></span>요일별 상세 — 전주 비교 (단위: 천원)</div>
+    <div style="overflow-x:auto"><table class="mon-table" id="weekDayTable" style="width:100%"></table></div>
+  </div>
+
+  <div class="chart-card">
+    <div class="chart-card-title"><span class="chart-dot blue"></span>주차장 유형별 매출 (이번주 합계)</div>
+    <div style="font-size:11.5px;color:#94a3b8;padding:0 0 6px">유형별 금액은 원천 데이터 기준이라 월 조정값(환불·사후정산·KCP)은 배분하지 않습니다.</div>
+    <div style="overflow-x:auto"><table class="mon-table" id="weekTypeTable" style="width:100%"></table></div>
   </div>
 </div>
 
@@ -1123,16 +1124,25 @@ input[type=file]{display:none}
     <div class="kpi-card"><div class="kpi-label">⚡ EV 전월대비</div><div class="kpi-value" id="moEvMoM">—</div><div class="kpi-sub" id="moEvMoMSub"></div></div>
   </div>
 
+  <div id="moCmpNote" style="background:#f0f7ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:#1e40af;font-weight:600"></div>
+
   <div class="chart-card" style="margin-bottom:16px">
-    <div class="chart-card-title"><span class="chart-dot blue"></span>일자별 매출 추이 (주차 · EV, VAT별도, 단위: 백만원)</div>
-    <div style="position:relative;height:260px;padding:12px">
-      <canvas id="monthChart"></canvas>
+    <div class="chart-card-title"><span class="chart-dot blue"></span>🅿️ 주차 일자별 매출 — 당월 vs 전월 (VAT별도·조정반영, 단위: 백만원)</div>
+    <div style="position:relative;height:280px;padding:12px">
+      <canvas id="monthChartPark"></canvas>
+    </div>
+  </div>
+
+  <div class="chart-card" style="margin-bottom:16px">
+    <div class="chart-card-title"><span class="chart-dot green"></span>⚡ EV 일자별 매출 — 당월 vs 전월 (VAT별도, 단위: 백만원)</div>
+    <div style="position:relative;height:280px;padding:12px">
+      <canvas id="monthChartEv"></canvas>
     </div>
   </div>
 
   <div class="mon-grid2">
     <div>
-      <div class="cmp-subrow-label">전체 누적 (주차 · EV) — 당월 · 전월 · 전년</div>
+      <div class="cmp-subrow-label" id="moSumLabel">전체 누적 (주차 · EV) — 당월 · 전월 · 전년</div>
       <table class="mon-table"><thead><tr>
         <th style="width:26%">구분</th><th>당월</th><th>전월</th><th>전월대비</th><th>전년</th><th>전년대비</th>
       </tr></thead><tbody id="moSumBody"></tbody></table>
@@ -2666,8 +2676,8 @@ async function fbLoadAll(){
     for(const ym of months){
       const mSnap = await fbDb.collection('months').doc(ym).get();
       if(mSnap.exists) ALL_DATA[ym] = mergeMonthData(ALL_DATA[ym], mSnap.data());
-      const lSnap = await fbDb.collection('lots').doc(ym).get();
-      if(lSnap.exists) uploadedLots[ym] = mergeLotsData(uploadedLots[ym], lSnap.data().lots||[]);
+      const lArr = await fbLoadLots(ym);
+      if(lArr) uploadedLots[ym] = mergeLotsData(uploadedLots[ym], lArr);
       uploadedLots[ym] = dedupeLots(uploadedLots[ym]||[]);
     }
     recomputeMonthRange();
@@ -2706,17 +2716,78 @@ async function fbSaveMonth(ym){
     return false;
   }
 }
+// ═══════════════════════════════════════════
+// [중요] Firestore 문서 1개의 최대 크기는 1,048,576 바이트(1MB)입니다.
+// 주차장별 데이터는 한 달에 3,500개가 넘어 한 문서에 담으면 약 1.8MB가 되어
+// set() 호출이 통째로 거부됩니다. (월 합계 데이터는 6KB라 저장 성공 → "매출은
+// 보이는데 주차장별·주요SITE·엑셀에는 안 나오는" 증상의 원인)
+// → lots/2026-09, lots/2026-09__p1, lots/2026-09__p2 … 로 나눠 저장합니다.
+//    보안 규칙은 그대로 둬도 됩니다. match /lots/{ym} 와일드카드에 그대로 걸립니다.
+// ═══════════════════════════════════════════
+const LOTS_CHUNK_BYTES = 700000; // 문서 1개 목표 크기 (1MB 한도 대비 안전 마진)
+const _lotsEnc = (typeof TextEncoder!=='undefined') ? new TextEncoder() : null;
+function _fbBytes(v){
+  if(v===null||v===undefined) return 1;
+  if(typeof v==='boolean') return 1;
+  if(typeof v==='number') return 8;
+  if(typeof v==='string') return (_lotsEnc?_lotsEnc.encode(v).length:v.length*3)+1;
+  if(Array.isArray(v)) return v.reduce((a,x)=>a+_fbBytes(x),0)+16;
+  let a=0; for(const k in v) a += (_lotsEnc?_lotsEnc.encode(k).length:k.length*3)+1+_fbBytes(v[k]);
+  return a+16;
+}
+function _chunkLots(lots, maxBytes){
+  const out=[]; let cur=[], size=0;
+  for(const l of lots){
+    const sz=_fbBytes(l)+32;
+    if(cur.length && size+sz>maxBytes){ out.push(cur); cur=[]; size=0; }
+    cur.push(l); size+=sz;
+  }
+  if(cur.length) out.push(cur);
+  return out.length?out:[[]];
+}
 async function fbSaveLots(ym){
   if(!fbReady || !fbDb) return true;
+  const lots = uploadedLots[ym]||[];
+  const chunks = _chunkLots(lots, LOTS_CHUNK_BYTES);
   try{
-    await fbDb.collection('lots').doc(ym).set({lots: uploadedLots[ym]||[]});
-    console.log('[fbSaveLots] '+ym+' 저장 완료 ('+(uploadedLots[ym]||[]).length+'개 주차장)');
+    // 이전에 몇 조각으로 저장돼 있었는지 확인 (조각 수가 줄면 남은 조각을 지워야 함)
+    let oldParts = 0;
+    try{
+      const prev = await fbDb.collection('lots').doc(ym).get();
+      if(prev.exists) oldParts = prev.data().parts || 1;
+    }catch(e){}
+
+    for(let i=0;i<chunks.length;i++){
+      const docId = (i===0) ? ym : (ym+'__p'+i);
+      await fbDb.collection('lots').doc(docId).set({
+        ym: ym, part: i, parts: chunks.length, lots: chunks[i]
+      });
+    }
+    for(let i=chunks.length; i<oldParts; i++){
+      try{ await fbDb.collection('lots').doc(ym+'__p'+i).delete(); }catch(e){}
+    }
+    console.log('[fbSaveLots] '+ym+' : 주차장 '+lots.length+'개 → 문서 '+chunks.length+'개로 저장 완료');
     return true;
   }catch(e){
-    console.error('주차장별 데이터 저장 실패:', e);
+    console.error('[fbSaveLots] '+ym+' 주차장별 데이터 저장 실패:', e);
     showToast('주차장별·주요SITE 데이터 서버 저장 실패: '+(e.message||e), 'error');
     return false;
   }
+}
+// 분할 저장된 주차장별 데이터를 모두 이어붙여 읽어옵니다.
+async function fbLoadLots(ym){
+  const first = await fbDb.collection('lots').doc(ym).get();
+  if(!first.exists) return null;
+  const d = first.data();
+  let arr = d.lots || [];
+  const parts = d.parts || 1;
+  for(let i=1;i<parts;i++){
+    try{
+      const p = await fbDb.collection('lots').doc(ym+'__p'+i).get();
+      if(p.exists) arr = arr.concat(p.data().lots||[]);
+    }catch(e){ console.error('[fbLoadLots] '+ym+' 조각 '+i+' 로드 실패:', e); }
+  }
+  return arr;
 }
 async function fbSaveManualSales(){
   if(!fbReady || !fbDb) return;
@@ -3068,11 +3139,12 @@ function processParkingRaw(file){
           const okM=await fbSaveMonth(ym);
           let okL=true;
           if(uploadedLots[ym]) okL=await fbSaveLots(ym);
-          if(!okM || !okL) failed.push(ym);
+          if(!okM) failed.push(ym+' 월합계');
+          if(!okL) failed.push(ym+' 주차장별');
         }
         cloudMsg = failed.length
           ? '\n❌ 서버 저장 실패: '+failed.join(', ')+'\n   → 이 브라우저에서만 보입니다. F12 콘솔 오류를 확인해주세요.'
-          : '\n☁️ 서버에 저장되어 링크를 보는 모두에게 반영됩니다.';
+          : '\n☁️ 서버에 저장되어 링크를 보는 모두에게 반영됩니다.\n   (월 합계 + 주차장별/주요SITE/엑셀 데이터 모두 저장됨)';
       } else {
         cloudMsg='\n⚠️ 관리자로 로그인되어 있지 않아 이 브라우저에만 반영되었습니다. 서버에 반영하려면 관리자 로그인 후 다시 업로드하세요.';
       }
@@ -5449,6 +5521,14 @@ function wmGetDayRecord(y,m,d,type){
 }
 
 // ── 주간 집계 ─────────────────────────────────────
+// 해당 월의 조정값(환불 + 사후정산 + KCP)을 그 달 전체 일수로 나눈 1일분
+function adjPerDay(ymKey){
+  const e=(typeof monthAdj!=='undefined')?monthAdj[ymKey]:null;
+  if(!e) return 0;
+  const tot=(e.refund||0)+(e.settle||0)+(e.kcp||0);
+  const dim=daysInMonthOf(ymKey);
+  return dim?tot/dim:0;
+}
 function computeWeekAgg(dates){
   let pTotal=0,eTotal=0,pCnt=0,eCnt=0;
   const byType={};
@@ -5457,7 +5537,9 @@ function computeWeekAgg(dates){
   dates.forEach(({y,m,d})=>{
     const pRec=wmGetDayRecord(y,m,d,'parking');
     const eRec=wmGetDayRecord(y,m,d,'ev');
-    const pv=pRec?vex(pRec.revenue||0):0;
+    // 주차 매출에 환불·사후정산·KCP 조정값을 일할로 더해줍니다
+    const pRaw=pRec?vex(pRec.revenue||0):0;
+    const pv=pRaw>0?pRaw+adjPerDay(ym(y,m)):0;
     const ev=eRec?(eRec.revenue||0):0;
     dailyP.push(pv>0?pv:null);
     dailyE.push(ev>0?ev:null);
@@ -5480,6 +5562,13 @@ function computeWeekAgg(dates){
   return {pTotal,eTotal,pAvg:pCnt?pTotal/pCnt:null,eAvg:eCnt?eTotal/eCnt:null,byType,dailyP,dailyE};
 }
 
+// 증감률 셀 (상승=빨강, 하락=초록 — 대시보드 공통 표기)
+function wkDiffCell(a,b){
+  if(a==null||b==null||!b) return '<td style="text-align:right;color:#cbd5e1">—</td>';
+  const r=(a-b)/b*100;
+  const col=r>=0?'var(--red)':'var(--green)';
+  return '<td style="text-align:right;font-weight:700;color:'+col+'">'+(r>=0?'+':'')+r.toFixed(1)+'%</td>';
+}
 let weekChartInst=null;
 function renderWeekView(){
   const dates=getWeekDates(new Date(cur.year,cur.month-1,cur.day));
@@ -5506,22 +5595,46 @@ function renderWeekView(){
   document.getElementById('wkParkMoMSub').textContent='전주 '+fmtMM(B.pTotal);
   document.getElementById('wkEvMoMSub').textContent='전주 '+fmtMM(B.eTotal);
 
-  // 차트
+  // 차트 — 이번주/전주를 나란히 겹쳐서 비교
   const canvas=document.getElementById('weekChart');
+  const DOW=['월','화','수','목','금','토','일'];
   if(canvas&&typeof Chart!=='undefined'){
-    const DOW=['월','화','수','목','금','토','일'];
     const labels=dates.map((d,i)=>DOW[i]+' ('+d.m+'/'+d.d+')');
-    const pVals=A.dailyP.map(v=>v!=null?v/1e6:null);
-    const eVals=A.dailyE.map(v=>v!=null?v/1e6:null);
+    const mil=v=>v!=null?v/1e6:null;
     if(weekChartInst) weekChartInst.destroy();
     weekChartInst=new Chart(canvas,{
       type:'bar',
       data:{labels, datasets:[
-        {label:'주차', data:pVals, backgroundColor:'rgba(37,99,235,.75)', borderRadius:4},
-        {label:'EV', data:eVals, backgroundColor:'rgba(16,185,129,.75)', borderRadius:4}
+        {label:'주차 (이번주)', data:A.dailyP.map(mil), backgroundColor:'rgba(37,99,235,.85)', borderRadius:4},
+        {label:'주차 (전주)',   data:B.dailyP.map(mil), backgroundColor:'rgba(37,99,235,.25)', borderRadius:4},
+        {label:'EV (이번주)',   data:A.dailyE.map(mil), backgroundColor:'rgba(16,185,129,.85)', borderRadius:4},
+        {label:'EV (전주)',     data:B.dailyE.map(mil), backgroundColor:'rgba(16,185,129,.25)', borderRadius:4}
       ]},
       options:{responsive:true, maintainAspectRatio:false,
-        plugins:{legend:{position:'top', align:'end'}},
+        interaction:{mode:'index', intersect:false},
+        plugins:{
+          legend:{position:'top', align:'end', labels:{boxWidth:12, font:{size:11.5}}},
+          tooltip:{callbacks:{
+            afterTitle:(items)=>{
+              const i=items[0].dataIndex, p=prevDates[i];
+              return '전주 동일 요일: '+p.m+'/'+p.d;
+            },
+            label:(ctx)=>{
+              const v=ctx.parsed.y;
+              if(v==null) return ctx.dataset.label+': —';
+              let txt=ctx.dataset.label+': '+v.toFixed(1)+'백만원';
+              // 이번주 항목에는 전주 대비 증감률을 같이 표시
+              if(ctx.datasetIndex===0||ctx.datasetIndex===2){
+                const prev=ctx.chart.data.datasets[ctx.datasetIndex+1].data[ctx.dataIndex];
+                if(prev!=null&&prev>0){
+                  const r=(v-prev)/prev*100;
+                  txt+='  ('+(r>=0?'+':'')+r.toFixed(1)+'%)';
+                }
+              }
+              return txt;
+            }
+          }}
+        },
         scales:{y:{beginAtZero:true, title:{display:true, text:'백만원'}}}
       }
     });
@@ -5538,35 +5651,80 @@ function renderWeekView(){
     '<thead><tr><th style="width:30%;text-align:left">유형</th><th>이번주</th><th>전주</th><th>증감</th></tr></thead>'+
     '<tbody>'+typeRows+monRow('합계',tA,tB,null,null,true)+'</tbody>';
 
-  // 요일별 상세 표
+  // 요일별 상세 표 — 전주 같은 요일과 나란히 비교
+  const kw=v=>v!=null?Math.round(v/1000).toLocaleString():'—';
   const dayRows=dates.map((d,i)=>{
-    const DOWK=['월','화','수','목','금','토','일'];
-    const pv=A.dailyP[i], ev=A.dailyE[i];
-    return `<tr><td style="font-weight:700">${DOWK[i]} (${d.m}/${d.d})</td><td style="text-align:right">${pv!=null?Math.round(pv/1000).toLocaleString()+'천원':'—'}</td><td style="text-align:right">${ev!=null?Math.round(ev/1000).toLocaleString()+'천원':'—'}</td></tr>`;
+    const p=dates[i], q=prevDates[i];
+    return '<tr>'
+      + '<td style="font-weight:700;text-align:left">'+DOW[i]+' <span style="font-weight:500;color:#94a3b8">('+p.m+'/'+p.d+' vs '+q.m+'/'+q.d+')</span></td>'
+      + '<td style="text-align:right;font-weight:700;color:var(--navy)">'+kw(A.dailyP[i])+'</td>'
+      + '<td style="text-align:right;color:var(--gray600)">'+kw(B.dailyP[i])+'</td>'
+      + wkDiffCell(A.dailyP[i],B.dailyP[i])
+      + '<td style="text-align:right;font-weight:700;color:var(--navy)">'+kw(A.dailyE[i])+'</td>'
+      + '<td style="text-align:right;color:var(--gray600)">'+kw(B.dailyE[i])+'</td>'
+      + wkDiffCell(A.dailyE[i],B.dailyE[i])
+      + '</tr>';
   }).join('');
+  const sum=arr=>{let t=null;arr.forEach(v=>{if(v!=null)t=(t||0)+v;});return t;};
+  const totRow='<tr class="mon-total">'
+    + '<td style="text-align:left">합계</td>'
+    + '<td style="text-align:right">'+kw(sum(A.dailyP))+'</td>'
+    + '<td style="text-align:right">'+kw(sum(B.dailyP))+'</td>'
+    + wkDiffCell(sum(A.dailyP),sum(B.dailyP))
+    + '<td style="text-align:right">'+kw(sum(A.dailyE))+'</td>'
+    + '<td style="text-align:right">'+kw(sum(B.dailyE))+'</td>'
+    + wkDiffCell(sum(A.dailyE),sum(B.dailyE))
+    + '</tr>';
   document.getElementById('weekDayTable').innerHTML=
-    '<thead><tr><th style="text-align:left">요일</th><th>주차</th><th>EV</th></tr></thead><tbody>'+dayRows+'</tbody>';
+    '<thead><tr>'
+    + '<th style="text-align:left;width:28%">요일 (이번주 vs 전주)</th>'
+    + '<th>🅿️ 이번주</th><th>🅿️ 전주</th><th>증감</th>'
+    + '<th>⚡ 이번주</th><th>⚡ 전주</th><th>증감</th>'
+    + '</tr></thead><tbody>'+dayRows+totRow+'</tbody>';
 }
 
 // ── 월간 집계 ─────────────────────────────────────
-function computeMonthAgg(ymKey){
+// 해당 월에서 매출이 실제로 채워진 마지막 날짜 (주차 또는 EV 기준)
+function monthLastDataDay(ymKey){
+  const md=ALL_DATA[ymKey];
+  if(!md) return 0;
+  const daysInM=daysInMonthOf(ymKey);
+  const [y,m]=ymKey.split('-').map(Number);
+  let last=0;
+  for(let d=1; d<=daysInM; d++){
+    const pRec=md.parking[d-1];
+    if(pRec&&(pRec.revenue||0)>0){ last=d; continue; }
+    const mmdd=String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    const eRec=(md.ev||[]).find(e=>e.date===mmdd);
+    if(eRec&&(eRec.revenue||0)>0) last=d;
+  }
+  return last;
+}
+// limitDays: 1일 ~ limitDays 까지만 합계에 반영 (전월/전년과 같은 기간으로 맞춰 비교하기 위함)
+//            일별 배열(dailyP/dailyE)은 항상 월 전체 길이로 돌려줍니다.
+function computeMonthAgg(ymKey, limitDays){
   const md=ALL_DATA[ymKey];
   if(!md)return null;
   const daysInM=daysInMonthOf(ymKey);
+  const lim=(limitDays&&limitDays>0)?Math.min(limitDays,daysInM):daysInM;
   const [y,m]=ymKey.split('-').map(Number);
+  // 환불·사후정산·KCP 조정값을 월 전체 일수로 균등 분배해 일별 주차 매출에 반영
+  const adjDay=adjPerDay(ymKey);
   let pTotal=0,pCnt=0,eTotal=0,eCnt=0;
   const byType={};
   CONTRACT_TYPES.filter(ct=>ct!=='기타').forEach(ct=>byType[ct]=0);
   const dailyP=[],dailyE=[];
   for(let d=1; d<=daysInM; d++){
     const pRec=md.parking[d-1];
-    const pv=pRec?vex(pRec.revenue||0):0;
+    const pRaw=pRec?vex(pRec.revenue||0):0;
+    const pv=pRaw>0?pRaw+adjDay:0;
     dailyP.push(pv>0?pv:null);
-    if(pv>0){pTotal+=pv;pCnt++;}
     const mmdd=String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
     const eRec=md.ev.find(e=>e.date===mmdd);
     const ev=eRec?(eRec.revenue||0):0;
     dailyE.push(ev>0?ev:null);
+    if(d>lim) continue;
+    if(pv>0){pTotal+=pv;pCnt++;}
     if(ev>0){eTotal+=ev;eCnt++;}
     if(md.parkingByType){
       Object.keys(byType).forEach(ct=>{
@@ -5575,69 +5733,113 @@ function computeMonthAgg(ymKey){
       });
     }
   }
-  const dateFrom=ymKey+'-01', dateTo=ymKey+'-'+String(daysInM).padStart(2,'0');
-  const manP=getManualSum(dateFrom,dateTo,'parking');
-  const manE=getManualSum(dateFrom,dateTo,'ev');
-  const adjEntry=monthAdj[ymKey];
-  const adjTotal=adjEntry?(adjEntry.refund||0)+(adjEntry.settle||0)+(adjEntry.kcp||0):0;
-  pTotal+=manP+adjTotal;
-  eTotal+=manE;
-  return {pTotal,eTotal,pAvg:pCnt?pTotal/pCnt:null,eAvg:eCnt?eTotal/eCnt:null,byType,dailyP,dailyE,daysInM};
+  const dateFrom=ymKey+'-01', dateTo=ymKey+'-'+String(lim).padStart(2,'0');
+  pTotal+=getManualSum(dateFrom,dateTo,'parking');
+  eTotal+=getManualSum(dateFrom,dateTo,'ev');
+  return {pTotal,eTotal,pAvg:pCnt?pTotal/pCnt:null,eAvg:eCnt?eTotal/eCnt:null,byType,dailyP,dailyE,daysInM,lim};
 }
 
-let monthChartInst=null;
+let monthChartInst=null, monthChartParkInst=null, monthChartEvInst=null;
+// 당월(막대) + 전월(점선) 을 겹쳐 그리는 공통 함수
+function moDrawDualChart(canvasId, inst, labels, curArr, prevArr, barColor, prevColor, name){
+  const canvas=document.getElementById(canvasId);
+  if(!canvas||typeof Chart==='undefined') return inst;
+  const mil=v=>v!=null?v/1e6:null;
+  const n=labels.length;
+  const curVals=Array.from({length:n},(_,i)=>mil(curArr?curArr[i]:null));
+  const prevVals=Array.from({length:n},(_,i)=>mil(prevArr?prevArr[i]:null));
+  const ds=[{type:'bar', label:'당월 '+name, data:curVals, backgroundColor:barColor, borderRadius:3, order:2}];
+  if(prevArr) ds.push({type:'line', label:'전월 '+name, data:prevVals, borderColor:prevColor,
+    backgroundColor:'transparent', borderWidth:2, borderDash:[5,4], pointRadius:0,
+    tension:.3, fill:false, spanGaps:false, order:1});
+  if(inst) inst.destroy();
+  return new Chart(canvas,{
+    type:'bar',
+    data:{labels, datasets:ds},
+    options:{responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index', intersect:false},
+      plugins:{
+        legend:{position:'top', align:'end', labels:{boxWidth:12, font:{size:11.5}}},
+        tooltip:{callbacks:{label:(ctx)=>{
+          const v=ctx.parsed.y;
+          if(v==null) return ctx.dataset.label+': —';
+          let txt=ctx.dataset.label+': '+v.toFixed(1)+'백만원';
+          if(ctx.datasetIndex===0&&ctx.chart.data.datasets[1]){
+            const prev=ctx.chart.data.datasets[1].data[ctx.dataIndex];
+            if(prev!=null&&prev>0){
+              const r=(v-prev)/prev*100;
+              txt+='  ('+(r>=0?'+':'')+r.toFixed(1)+'%)';
+            }
+          }
+          return txt;
+        }}}
+      },
+      scales:{
+        x:{ticks:{autoSkip:true, maxTicksLimit:16, font:{size:10.5}}},
+        y:{beginAtZero:true, title:{display:true, text:'백만원'}}
+      }
+    }
+  });
+}
 function renderMonthView(){
   const ymKey=ym(cur.year,cur.month);
   const prevKey=prevYM(cur.year,cur.month);
   const yoyKey=prevYearYM(cur.year,cur.month);
-  const A=computeMonthAgg(ymKey);
+  // 당월에서 매출이 채워진 마지막 날짜까지만 전월·전년과 같은 기간으로 비교합니다.
+  // 월이 다 채워져 있으면 자동으로 "월 전체 vs 월 전체" 비교가 됩니다.
+  const curLast=monthLastDataDay(ymKey)||daysInMonthOf(ymKey);
+  let cmpDays=curLast;
+  if(ALL_DATA[prevKey]) cmpDays=Math.min(cmpDays, daysInMonthOf(prevKey));
+  if(ALL_DATA[yoyKey])  cmpDays=Math.min(cmpDays, daysInMonthOf(yoyKey));
+
+  const A=computeMonthAgg(ymKey, curLast);          // 당월 실적 (채워진 날까지)
   if(!A)return;
-  const B=ALL_DATA[prevKey]?computeMonthAgg(prevKey):null;
-  const C=ALL_DATA[yoyKey]?computeMonthAgg(yoyKey):null;
+  const Acmp=(cmpDays===curLast)?A:computeMonthAgg(ymKey, cmpDays); // 비교용 (같은 일수)
+  const B=ALL_DATA[prevKey]?computeMonthAgg(prevKey, cmpDays):null;
+  const C=ALL_DATA[yoyKey]?computeMonthAgg(yoyKey, cmpDays):null;
+
+  const fullMonth=(curLast>=daysInMonthOf(ymKey));
+  const noteEl=document.getElementById('moCmpNote');
+  if(noteEl){
+    noteEl.textContent = fullMonth
+      ? '📌 '+cur.month+'월이 모두 채워져 있어 전월·전년과 월 전체 기준으로 비교합니다. (1~'+cmpDays+'일)'
+      : '📌 '+cur.month+'월은 '+curLast+'일까지 입력되어 있습니다. 전월·전년도 같은 1~'+cmpDays+'일 구간만 잘라서 비교합니다.';
+  }
+  const sumLbl=document.getElementById('moSumLabel');
+  if(sumLbl) sumLbl.textContent='전체 누적 (주차 · EV) — 1~'+cmpDays+'일 동일 기간 비교';
 
   document.getElementById('moParkTotal').textContent=fmtMM(A.pTotal);
   document.getElementById('moParkAvg').textContent='일평균 '+fmtMil(A.pAvg)+'백만원';
   document.getElementById('moEvTotal').textContent=fmtMM(A.eTotal);
   document.getElementById('moEvAvg').textContent='일평균 '+fmtMil(A.eAvg)+'백만원';
 
-  const pMoM=B&&B.pTotal>0?pct(A.pTotal,B.pTotal):null;
-  const eMoM=B&&B.eTotal>0?pct(A.eTotal,B.eTotal):null;
+  const pMoM=B&&B.pTotal>0?pct(Acmp.pTotal,B.pTotal):null;
+  const eMoM=B&&B.eTotal>0?pct(Acmp.eTotal,B.eTotal):null;
   const pEl=document.getElementById('moParkMoM');
   const eEl=document.getElementById('moEvMoM');
   if(pMoM!==null){pEl.textContent=(pMoM>=0?'+':'')+pMoM.toFixed(1)+'%';pEl.style.color=pMoM>=0?'var(--red)':'var(--green)';}
   else{pEl.textContent='—';pEl.style.color='var(--gray500)';}
   if(eMoM!==null){eEl.textContent=(eMoM>=0?'+':'')+eMoM.toFixed(1)+'%';eEl.style.color=eMoM>=0?'var(--red)':'var(--green)';}
   else{eEl.textContent='—';eEl.style.color='var(--gray500)';}
-  document.getElementById('moParkMoMSub').textContent=B?'전월 '+fmtMM(B.pTotal):'전월 데이터 없음';
-  document.getElementById('moEvMoMSub').textContent=B?'전월 '+fmtMM(B.eTotal):'전월 데이터 없음';
+  const rangeTxt=' (1~'+cmpDays+'일)';
+  document.getElementById('moParkMoMSub').textContent=B?'전월 '+fmtMM(B.pTotal)+rangeTxt:'전월 데이터 없음';
+  document.getElementById('moEvMoMSub').textContent=B?'전월 '+fmtMM(B.eTotal)+rangeTxt:'전월 데이터 없음';
 
-  // 일자별 추이 차트
-  const canvas=document.getElementById('monthChart');
-  if(canvas&&typeof Chart!=='undefined'){
-    const labels=A.dailyP.map((v,i)=>(i+1)+'일');
-    const pVals=A.dailyP.map(v=>v!=null?v/1e6:null);
-    const eVals=A.dailyE.map(v=>v!=null?v/1e6:null);
-    if(monthChartInst) monthChartInst.destroy();
-    monthChartInst=new Chart(canvas,{
-      type:'line',
-      data:{labels, datasets:[
-        {label:'주차', data:pVals, borderColor:'#2563eb', backgroundColor:'rgba(37,99,235,.08)', borderWidth:2, tension:.3, pointRadius:1.5, fill:true, spanGaps:false},
-        {label:'EV', data:eVals, borderColor:'#16a34a', backgroundColor:'rgba(16,185,129,.08)', borderWidth:2, tension:.3, pointRadius:1.5, fill:true, spanGaps:false}
-      ]},
-      options:{responsive:true, maintainAspectRatio:false,
-        plugins:{legend:{position:'top', align:'end'}},
-        scales:{y:{beginAtZero:true, title:{display:true, text:'백만원'}}}
-      }
-    });
-  }
+  // 일자별 추이 — 주차 / EV를 각각 별도 차트로, 당월(막대) vs 전월(점선)
+  const Bfull=ALL_DATA[prevKey]?computeMonthAgg(prevKey):null;
+  const labels=A.dailyP.map((v,i)=>(i+1)+'일');
+  monthChartParkInst=moDrawDualChart('monthChartPark', monthChartParkInst, labels,
+    A.dailyP, Bfull?Bfull.dailyP:null, 'rgba(37,99,235,.8)', '#f59e0b', '주차');
+  monthChartEvInst=moDrawDualChart('monthChartEv', monthChartEvInst, labels,
+    A.dailyE, Bfull?Bfull.dailyE:null, 'rgba(16,185,129,.8)', '#f59e0b', 'EV');
 
   document.getElementById('moSumBody').innerHTML=
-    monRow('🅿️ 주차 (VAT별도)',A.pTotal,B&&B.pTotal,C&&C.pTotal)+
-    monRow('⚡ EV (VAT별도)',A.eTotal,B&&B.eTotal,C&&C.eTotal)+
-    monRow('합계',A.pTotal+A.eTotal,B&&(B.pTotal+B.eTotal),C&&(C.pTotal+C.eTotal),null,true);
+    monRow('🅿️ 주차 (VAT별도)',Acmp.pTotal,B&&B.pTotal,C&&C.pTotal)+
+    monRow('⚡ EV (VAT별도)',Acmp.eTotal,B&&B.eTotal,C&&C.eTotal)+
+    monRow('합계',Acmp.pTotal+Acmp.eTotal,B&&(B.pTotal+B.eTotal),C&&(C.pTotal+C.eTotal),null,true);
 
   const cts=CONTRACT_TYPES.filter(ct=>ct!=='기타')
-    .map(ct=>({ct,a:A.byType[ct]||0,b:B?(B.byType[ct]||0):null,c:C?(C.byType[ct]||0):null}))
+    .map(ct=>({ct,a:Acmp.byType[ct]||0,b:B?(B.byType[ct]||0):null,c:C?(C.byType[ct]||0):null}))
     .filter(r=>r.a>0||(r.b||0)>0||(r.c||0)>0)
     .sort((x,y)=>y.a-x.a);
   const tA=cts.reduce((s,r)=>s+r.a,0);
