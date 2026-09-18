@@ -2623,6 +2623,16 @@ function loadLots(){ /* Firestore로 대체됨 - fbLoadAll()에서 일괄 로드
 // - "내장 데이터가 없거나 0인 날짜만" Firebase 값으로 채워넣음
 // - Firebase에 남은 테스트/과거 데이터가 최신 내장 데이터를 덮어쓰지 않도록 방지
 // ═══════════════════════════════════════════
+// ═══════════════════════════════════════════
+// [병합 우선순위]  mine = GitHub 코드 내장 데이터 / theirs = Firebase(RAW 업로드) 데이터
+//
+// 예전에는 내장 값이 0보다 크면 무조건 내장 값을 썼습니다. 그래서 이미 값이 들어있는
+// 날짜는 RAW를 다시 올려도 정정이 반영되지 않았습니다.
+// (예: 9월 1~13일 EV 매출이 정산 전 금액으로 내장되어 있어 정산 후 RAW를 올려도 그대로)
+//
+// → 서버에 올라온 값이 있으면 그 값을 쓰고, 서버에 값이 없는 날짜만 내장 값으로 채웁니다.
+//   업로드는 관리자만 할 수 있으므로 "가장 최근에 올린 RAW가 정답"이 됩니다.
+// ═══════════════════════════════════════════
 function mergeMonthData(mine, theirs){
   if(!mine) return theirs;
   if(!theirs) return mine;
@@ -2631,9 +2641,9 @@ function mergeMonthData(mine, theirs){
   for(let i=0;i<daysLen;i++){
     const mp=mine.parking&&mine.parking[i];
     const tp=theirs.parking&&theirs.parking[i];
-    if(mp&&mp.revenue>0) mergedParking.push(mp);
-    else if(tp) mergedParking.push(tp);
-    else mergedParking.push(mp||tp||{date:'',day:'',revenue:0});
+    if(tp&&tp.revenue>0) mergedParking.push(tp);          // 서버 값 우선
+    else if(mp&&mp.revenue>0) mergedParking.push(mp);     // 서버에 없으면 내장 값
+    else mergedParking.push(tp||mp||{date:'',day:'',revenue:0});
   }
   const mergedByType={};
   const allTypes=new Set([...Object.keys(mine.parkingByType||{}), ...Object.keys(theirs.parkingByType||{})]);
@@ -2644,13 +2654,13 @@ function mergeMonthData(mine, theirs){
     const arr=[];
     for(let i=0;i<len;i++){
       const mv=mArr[i]||0, tv=tArr[i]||0;
-      arr.push(mv>0?mv:tv);
+      arr.push(tv>0?tv:mv);                                // 서버 값 우선
     }
     mergedByType[ct]=arr;
   });
   const evMap={};
-  (theirs.ev||[]).forEach(e=>{ evMap[e.date]=e; });
-  (mine.ev||[]).forEach(e=>{
+  (mine.ev||[]).forEach(e=>{ evMap[e.date]=e; });          // 먼저 내장 값을 깔고
+  (theirs.ev||[]).forEach(e=>{                             // 서버 값으로 덮어씀
     const existing=evMap[e.date];
     if((e.revenue>0)||!existing) evMap[e.date]=e;
   });
@@ -2673,9 +2683,9 @@ function mergeLotsData(mineLots, theirsLots){
     const days=[];
     for(let i=0;i<len;i++){
       const mv=ml.days[i]||0, tv=tl.days[i]||0;
-      days.push(mv>0?mv:tv);
+      days.push(tv>0?tv:mv);   // 서버(업로드) 값 우선 — 정정분이 반영되도록
     }
-    result.push(Object.assign({}, ml, {days}));
+    result.push(Object.assign({}, ml, tl, {days}));
   });
   theirsLots.forEach(tl=>{
     if(!seen.has(keyOf(tl))) result.push(tl);
