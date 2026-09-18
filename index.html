@@ -1897,15 +1897,23 @@ function updateMobility(){
   // 당월 누계에는 "오늘까지 경과한 일수만큼"의 조정값만 반영 (월 전체 조정값을 한번에 더하지 않음)
   const pTotalAdj=vex(pTotal)+manP+(adjDaily*day);
   const eTotalAdj=eTotal+manE;
-  const pAvgAdj=pTotalAdj/pAll.length;
-  const eAvgAdj=eTotalAdj/eAll.length;
+  // ───────────────────────────────────────────
+  // [일평균 분모] 예전에는 "오늘까지 경과한 일수"(pAll.length / eAll.length)로 나눴습니다.
+  // 매출이 아직 안 들어온 날까지 분모에 들어가 일평균이 실제보다 작게 나왔고,
+  // 매출이 있는 날만 세는 주간·월간 화면과 값이 서로 달랐습니다.
+  // → 세 화면 모두 "매출이 있는 날 수"로 통일합니다.
+  // ───────────────────────────────────────────
+  const pDataDays=pAll.filter(d=>(d.revenue||0)>0).length;
+  const eDataDays=eAll.filter(d=>(d.revenue||0)>0).length;
+  const pAvgAdj=pDataDays?(vex(pTotal)+manP+(adjDaily*pDataDays))/pDataDays:0;
+  const eAvgAdj=eDataDays?eTotalAdj/eDataDays:0;
   const manPDay=getManualDay(dateTo,'parking');
   const manEDay=getManualDay(dateTo,'ev');
 
   document.getElementById('kpiParkingTotal').textContent=fmtMM(pTotalAdj)+(manP>0?'*':'');
-  document.getElementById('kpiParkingAvgDay').textContent='일평균 '+fmtM(pAvgAdj)+'억'+(manP>0?' (수기포함)':'');
+  document.getElementById('kpiParkingAvgDay').textContent='일평균 '+fmtM(pAvgAdj)+'억 ('+pDataDays+'일)'+(manP>0?' 수기포함':'');
   document.getElementById('kpiEvTotal').textContent=fmtMM(eTotalAdj)+(manE>0?'*':'');
-  document.getElementById('kpiEvAvgDay').textContent='일평균 '+fmtM(eAvgAdj)+'억'+(manE>0?' (수기포함)':'');
+  document.getElementById('kpiEvAvgDay').textContent='일평균 '+fmtM(eAvgAdj)+'억 ('+eDataDays+'일)'+(manE>0?' 수기포함':'');
   updateSummaryPreview();
   
   // MoM
@@ -2207,8 +2215,15 @@ function updateMobility(){
     if(!prevDaysCount) return 0;
     const prevIdx=prevDaysCount+dayIdx-7;
     if(prevIdx<0) return 0;
-    const match=prevLotsForMonth.find(pl=>pl.name===p.name&&pl.ct===p.ct);
-    return match?(match.days[prevIdx]||0):0;
+    // 계약유형이 바뀐 경우도 이어지도록 코드 → 이름 순으로 매칭
+    let cands = p.code ? prevLotsForMonth.filter(pl=>pl.code&&pl.code===p.code) : [];
+    if(!cands.length){
+      const pn=(typeof siteNormName==='function')?siteNormName(p):p.name;
+      cands=prevLotsForMonth.filter(pl=>((typeof siteNormName==='function')?siteNormName(pl):pl.name)===pn);
+    }
+    if(!cands.length) return 0;
+    let sum=0; cands.forEach(c=>{ sum+=(c.days&&c.days[prevIdx])||0; });
+    return sum;
   };
   let incHtml='',decHtml='';
   if(lotsForMonth.length>0){
@@ -3121,6 +3136,7 @@ function processParkingRaw(file){
             if(!mergedNames.has(k)) merged.push(l);
           });
           uploadedLots[key]=dedupeLots(merged);
+          applyLatestTypeWithinMonth(key);
           siteInvalidateCaches();
           lotCount+=lots.length;
         }
@@ -4683,15 +4699,20 @@ function siteRenderNewPanel(ymKey){
     panel.style.background='#f8fafc'; panel.style.borderColor='#e2e8f0';
     titleEl.style.color='#64748b';
     titleEl.textContent='🆕 '+yy+'년 '+mm+'월 신규 SITE — 없음';
-    bodyEl.innerHTML='<div style="font-size:12px;color:#94a3b8">이 달에 처음 매출이 발생한 대형·대학교·매입·광명역·공항철도 주차장이 없습니다.'
+    bodyEl.innerHTML='<div style="font-size:12px;color:#94a3b8;flex-basis:100%">이 달에 처음 매출이 발생한 대형·대학교·매입·광명역·공항철도 주차장이 없습니다.'
       + (siteTypeStartCache && siteTypeStartCache['대형']===ymKey ? ' (데이터가 처음 수집된 달이라 신규 판정에서 제외됩니다)' : '')
-      + '</div>';
+      + '</div>' + siteTypeChangedHtml(ymKey);
     return;
   }
   panel.style.background='#f0fdf4'; panel.style.borderColor='#bbf7d0';
   titleEl.style.color='#166534';
   titleEl.textContent='🆕 '+yy+'년 '+mm+'월 신규 SITE '+list.length+'개'+(typeSummary?'  ('+typeSummary+')':'');
-  bodyEl.innerHTML=list.map(l=>{
+  bodyEl.innerHTML=siteNewPanelCards(list, ymKey, mm, daysInM) + siteTypeChangedHtml(ymKey);
+  return;
+}
+// 신규 카드 묶음
+function siteNewPanelCards(list, ymKey, mm, daysInM){
+  return list.map(l=>{
     let firstDay=null, total=0;
     for(let d=1; d<=daysInM; d++){
       const v=(l.days&&l.days[d-1])||0;
@@ -4703,6 +4724,33 @@ function siteRenderNewPanel(ymKey){
       + '<div style="font-size:10.5px;color:#64748b;margin-top:3px">첫 매출 '+mm+'/'+(firstDay||'-')+' · 월 '+siteFmtWon(total)+'</div>'
       + '</div>';
   }).join('');
+}
+// 이번 달 계약유형이 바뀐 주차장 (신규는 아니지만 따로 확인할 수 있게)
+function siteTypeChangedHtml(ymKey){
+  let html='';
+  const changed=siteTypeChangedListOf(ymKey).filter(x=>siteSelectedTypes.has(x.lot.ct));
+  if(changed.length){
+    html += '<div style="flex-basis:100%;margin-top:12px;padding-top:12px;border-top:1px dashed #cbd5e1">'
+      + '<div style="font-size:12px;font-weight:800;color:#6d28d9;margin-bottom:8px">🔄 전월 대비 계약유형 변경 '+changed.length+'건 (신규 아님 · 전월 실적은 이어서 비교됩니다)</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:8px">'
+      + changed.map(x=>'<div style="background:white;border:1px solid #ddd6fe;border-radius:10px;padding:7px 11px">'
+          + '<div style="font-size:12.5px;font-weight:700;color:#0f1b2d">'+siteNormName(x.lot)+'</div>'
+          + '<div style="font-size:10.5px;color:#6d28d9;margin-top:2px">'+x.from+' → <b>'+x.lot.ct+'</b></div>'
+          + '</div>').join('')
+      + '</div></div>';
+  }
+  const inMonth=(uploadedLots[ymKey]||[]).filter(l=>l.ctMerged&&siteSelectedTypes.has(l.ct));
+  if(inMonth.length){
+    html += '<div style="flex-basis:100%;margin-top:12px;padding-top:12px;border-top:1px dashed #cbd5e1">'
+      + '<div style="font-size:12px;font-weight:800;color:#0e7490;margin-bottom:8px">📅 월 중간 계약유형 변경 '+inMonth.length+'건 (그 달 매출을 최근 유형으로 합산)</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:8px">'
+      + inMonth.map(l=>'<div style="background:white;border:1px solid #a5f3fc;border-radius:10px;padding:7px 11px">'
+          + '<div style="font-size:12.5px;font-weight:700;color:#0f1b2d">'+siteNormName(l)+'</div>'
+          + '<div style="font-size:10.5px;color:#0e7490;margin-top:2px">'+l.ctMerged+' → <b>'+l.ct+'</b></div>'
+          + '</div>').join('')
+      + '</div></div>';
+  }
+  return html;
 }
 let siteNewOnly=false;
 function siteToggleNewOnly(){
@@ -4846,8 +4894,69 @@ function dedupeLots(lots){
   });
   return Array.from(map.values());
 }
+// ═══════════════════════════════════════════
+// [월 내부 계약유형 변경]
+// 한 달 안에서 유형이 바뀐 주차장(예: 8/1~10 중소형, 8/11~ 대형)은
+// "그 달의 가장 최근 매출이 있는 유형"으로 한 건에 몰아서 집계합니다.
+//  - 대표 유형 = 마지막 매출일이 가장 늦은 기록의 유형
+//  - 일자별 금액은 두 기록을 이어붙입니다 (같은 날 양쪽에 값이 있으면 중복 기록으로
+//    보고 큰 값만 사용 → 매출이 부풀지 않습니다)
+//  - 유형별 집계(parkingByType)에서도 옮겨간 날짜만큼 옛 유형에서 빼고 새 유형에 더해
+//    전체 합계는 그대로 유지합니다
+// ═══════════════════════════════════════════
+function applyLatestTypeWithinMonth(ymKey){
+  const lots=uploadedLots[ymKey];
+  if(!lots||!lots.length) return 0;
+  const md=ALL_DATA[ymKey];
+  const bt=md?md.parkingByType:null;
+  const groups={};
+  lots.forEach(l=>{ const k=siteNormName(l); (groups[k]=groups[k]||[]).push(l); });
+  const out=[]; let merged=0;
+  Object.keys(groups).forEach(k=>{
+    const recs=groups[k];
+    const cts=Array.from(new Set(recs.map(r=>r.ct)));
+    if(cts.length<=1){ recs.forEach(r=>out.push(r)); return; }
+    const info=recs.map(r=>{
+      let first=0,last=0;
+      const dl=(r.days||[]).length;
+      for(let i=0;i<dl;i++){ if((r.days[i]||0)>0){ if(!first) first=i+1; last=i+1; } }
+      return {r, first, last};
+    });
+    // 마지막 매출일이 가장 늦은 유형 → 동률이면 시작일이 늦은 쪽 → 그래도 동률이면 코드 보유 쪽
+    info.sort((a,b)=> (b.last-a.last) || (b.first-a.first) || ((b.r.code?1:0)-(a.r.code?1:0)));
+    const win=info[0].r;
+    const len=Math.max.apply(null, recs.map(r=>(r.days||[]).length));
+    const days=new Array(len).fill(0);
+    for(let i=0;i<len;i++) days[i]=(win.days&&win.days[i])||0;
+    info.slice(1).forEach(function(o){
+      const r=o.r;
+      for(let i=0;i<len;i++){
+        const lv=(r.days&&r.days[i])||0;
+        if(lv<=0) continue;
+        const wv=(win.days&&win.days[i])||0;
+        if(wv>0){ if(lv>days[i]) days[i]=lv; continue; } // 같은 날 중복 → 큰 값만, 이동 없음
+        days[i]=lv;
+        if(bt && bt[r.ct] && bt[win.ct] && i<bt[r.ct].length && i<bt[win.ct].length){
+          const mv=Math.min(lv, bt[r.ct][i]||0);
+          bt[r.ct][i]=(bt[r.ct][i]||0)-mv;
+          bt[win.ct][i]=(bt[win.ct][i]||0)+mv;
+        }
+      }
+    });
+    out.push(Object.assign({}, win, {
+      days: days,
+      ctMerged: cts.filter(function(c){return c!==win.ct;}).join(' · ')
+    }));
+    merged++;
+  });
+  uploadedLots[ymKey]=out;
+  return merged;
+}
 function dedupeAllLots(){
-  Object.keys(uploadedLots).forEach(k=>{ uploadedLots[k]=dedupeLots(uploadedLots[k]); });
+  Object.keys(uploadedLots).forEach(k=>{
+    uploadedLots[k]=dedupeLots(uploadedLots[k]);
+    applyLatestTypeWithinMonth(k);
+  });
   siteInvalidateCaches();
 }
 
@@ -4863,36 +4972,85 @@ function siteInvalidateCaches(){
 }
 // 모든 월을 훑어 "이름 기준 최초 매출월", "주차장코드 기준 최초 매출월",
 // "유형별 데이터 최초 수집월" 세 가지를 한 번에 만들어 캐시합니다.
+// ═══════════════════════════════════════════
+// [계약유형 변경 대응]
+// 같은 주차장이 8월엔 중소형, 9월엔 대형처럼 계약유형이 바뀌는 경우가 있습니다.
+// 집계 자체는 원본 그대로 두어 "이전 월은 변경 전 유형, 이후 월은 변경 후 유형"으로
+// 잡히지만, 신규(NEW) 판정만큼은 유형과 무관하게 "그 주차장이 언제 처음 등장했는지"로
+// 봐야 합니다. 그래야 유형만 바뀐 기존 주차장이 신규로 잘못 잡히지 않습니다.
+// → 최초 등장월을 주차장코드 기준 / 이름 기준 두 가지로 각각 만들고 둘 중 빠른 쪽을 씁니다.
+// ═══════════════════════════════════════════
 function siteBuildFirstMonthMap(){
   if(siteFirstMonthCache) return siteFirstMonthCache;
-  const first={}, firstCode={}, typeStart={};
+  const firstName={}, firstCode={}, typeStart={};
   Object.keys(uploadedLots).sort().forEach(k=>{
     (uploadedLots[k]||[]).forEach(l=>{
       if(!l || !l.days) return;
       let sum=0; for(let i=0;i<l.days.length;i++) sum+=(l.days[i]||0);
       if(sum<=0) return;
-      const nk=l.ct+'|'+siteNormName(l);
-      if(!first[nk]) first[nk]=k;
-      if(l.code){
-        const ck=l.ct+'|'+l.code;
-        if(!firstCode[ck]) firstCode[ck]=k;
-      }
+      const nk=siteNormName(l);                       // 유형을 빼고 이름만
+      if(!firstName[nk]) firstName[nk]=k;
+      if(l.code && !firstCode[l.code]) firstCode[l.code]=k;   // 유형을 빼고 코드만
       if(!typeStart[l.ct]) typeStart[l.ct]=k;
     });
   });
-  siteFirstMonthCache=first; siteCodeFirstCache=firstCode; siteTypeStartCache=typeStart;
-  return first;
+  siteFirstMonthCache=firstName; siteCodeFirstCache=firstCode; siteTypeStartCache=typeStart;
+  return firstName;
+}
+// 그 주차장이 처음 등장한 월 (코드/이름 중 더 이른 쪽)
+function siteFirstMonthOf(l){
+  siteBuildFirstMonthMap();
+  const a = l.code ? siteCodeFirstCache[l.code] : null;
+  const b = siteFirstMonthCache[siteNormName(l)];
+  if(a && b) return a < b ? a : b;
+  return a || b || null;
 }
 function siteIsNew(l, ymKey){
   siteBuildFirstMonthMap();
   // 해당 유형의 데이터가 처음 수집된 달은 전부 신규로 잡히므로 제외
   if(siteTypeStartCache[l.ct] === ymKey) return false;
-  // ① 이름 기준으로 이번 달이 최초 매출월이어야 함
-  if(siteFirstMonthCache[l.ct+'|'+siteNormName(l)] !== ymKey) return false;
-  // ② 주차장코드가 있으면 코드 기준으로도 최초여야 함
-  //    (이름만 바뀐 기존 주차장이 신규로 잘못 잡히는 것을 막아줍니다)
-  if(l.code && siteCodeFirstCache[l.ct+'|'+l.code] !== ymKey) return false;
-  return true;
+  // 유형과 무관하게, 이 주차장이 이번 달에 처음 등장했을 때만 신규
+  return siteFirstMonthOf(l) === ymKey;
+}
+// ═══════════════════════════════════════════
+// 전월 기록 찾기 — 계약유형이 바뀌었어도 같은 주차장으로 이어서 봅니다.
+//  ① 주차장코드가 같은 기록  ② 없으면 이름이 같은 기록
+// 월 중간에 유형이 바뀐 달(예: 8/1~10 중소형, 8/11~ 대형)은 한 달에 두 건으로
+// 나뉘어 있으므로, 일자별로 합산해 하나의 배열로 만들어 돌려줍니다.
+// ═══════════════════════════════════════════
+function siteMergeDays(recs){
+  let len=0; recs.forEach(r=>{ len=Math.max(len,(r.days||[]).length); });
+  const out=new Array(len).fill(0);
+  recs.forEach(r=>{ for(let i=0;i<len;i++) out[i]+=(r.days&&r.days[i])||0; });
+  return out;
+}
+function siteFindPrevMerged(prevLots, l){
+  if(!prevLots || !prevLots.length) return null;
+  let recs=[];
+  if(l.code) recs=prevLots.filter(pl=>pl.code && pl.code===l.code);
+  if(!recs.length){
+    const n=siteNormName(l);
+    recs=prevLots.filter(pl=>siteNormName(pl)===n);
+  }
+  if(!recs.length) return null;
+  const cts=Array.from(new Set(recs.map(r=>r.ct)));
+  // 전월 기록에 이번 달 유형이 아예 없을 때만 유형변경으로 봅니다.
+  // (월 중간에 바뀐 달은 두 유형이 모두 들어있으므로 그 다음 달에는 표시되지 않습니다)
+  const typeChanged = !recs.some(r=>r.ct===l.ct);
+  return {days:siteMergeDays(recs), cts:cts.filter(c=>c!==l.ct).concat(cts.filter(c=>c===l.ct)), typeChanged, recs};
+}
+// 이번 달에 계약유형이 바뀐 주차장 목록
+function siteTypeChangedListOf(ymKey){
+  const [y,m]=ymKey.split('-').map(Number);
+  const prevLots=uploadedLots[prevYM(y,m)]||[];
+  if(!prevLots.length) return [];
+  const out=[];
+  (uploadedLots[ymKey]||[]).forEach(l=>{
+    if(SITE_TYPES.indexOf(l.ct)<0) return;
+    const pm=siteFindPrevMerged(prevLots,l);
+    if(pm && pm.typeChanged) out.push({lot:l, from:pm.cts.join(' · ')});
+  });
+  return out;
 }
 function siteNewListOf(ymKey){
   const out=[];
@@ -5023,12 +5181,14 @@ function siteRender(){
     const wk=siteComputeWeekCompare(l.days,y,m,daysInM);
     // siteName 필드가 없는 예전 형식(name에 "(유형)"이 붙은 형태) 데이터와도 매칭되도록,
     // 이번달·전월 양쪽 모두 동일한 정규화 함수로 이름을 뽑아서 비교
-    const curSiteName=siteNormName(l);
-    const prevMatch=prevLots.find(pl=>siteNormName(pl)===curSiteName && pl.ct===l.ct);
-    const prevStats=prevMatch&&prevDaysInM ? siteComputeStats(prevMatch.days,py,pm,prevDaysInM) : {avg:null,wdAvg:null,weAvg:null};
+    // 계약유형이 바뀐 주차장도 전월 실적이 끊기지 않도록, 유형과 무관하게 매칭합니다
+    const prevMerged=siteFindPrevMerged(prevLots,l);
+    const prevStats=prevMerged&&prevDaysInM ? siteComputeStats(prevMerged.days,py,pm,prevDaysInM) : {avg:null,wdAvg:null,weAvg:null};
     const yearInfo=siteResolveYear(l);
     return Object.assign({},l,{
       isNew:siteIsNew(l,ymKey),
+      typeChanged:!!(prevMerged&&prevMerged.typeChanged),
+      prevCts:prevMerged?prevMerged.cts.join(' · '):'',
       year:yearInfo.year, yearLabel:yearInfo.yearLabel,
       total:stats.total, avg:stats.avg, wdAvg:stats.wdAvg, weAvg:stats.weAvg, cnt:stats.cnt,
       pAvg:prevStats.avg, pWdAvg:prevStats.wdAvg, pWeAvg:prevStats.weAvg,
@@ -5085,7 +5245,7 @@ function siteRender(){
     let html=`
     <tr onclick="siteToggleExpand('${key}')" style="cursor:pointer">
       <td style="padding:10px 12px;${bd}"><span style="font-size:10.5px;font-weight:800;color:white;background:${SITE_CHIP_COLORS[l.ct]};padding:2px 8px;border-radius:100px;white-space:nowrap">${l.ct}</span></td>
-      <td style="padding:10px 12px;font-weight:700;color:#0f1b2d;${bd}">${siteNormName(l)}${l.isNew?' <span style="font-size:9.5px;font-weight:800;color:white;background:#16a34a;padding:2px 6px;border-radius:5px;vertical-align:middle;letter-spacing:.3px">NEW</span>':''}</td>
+      <td style="padding:10px 12px;font-weight:700;color:#0f1b2d;${bd}">${siteNormName(l)}${l.isNew?' <span style="font-size:9.5px;font-weight:800;color:white;background:#16a34a;padding:2px 6px;border-radius:5px;vertical-align:middle;letter-spacing:.3px">NEW</span>':''}${l.typeChanged?' <span title="전월 계약유형: '+l.prevCts+'" style="font-size:9.5px;font-weight:800;color:white;background:#7c3aed;padding:2px 6px;border-radius:5px;vertical-align:middle;letter-spacing:.3px">유형변경</span>':''}${l.ctMerged?' <span title="이 달 안에서 '+l.ctMerged+' → '+l.ct+' 로 바뀌어 '+l.ct+' 기준으로 합산했습니다" style="font-size:9.5px;font-weight:800;color:white;background:#0891b2;padding:2px 6px;border-radius:5px;vertical-align:middle;letter-spacing:.3px">월중변경</span>':''}</td>
       <td style="padding:10px 12px;color:#64748b;${bd}"><span style="font-size:10.5px;font-weight:700;color:#64748b;background:#eef2f7;padding:2px 7px;border-radius:6px;white-space:nowrap">${yearBadge}</span></td>
       <td style="padding:10px 12px;text-align:right;font-weight:800;color:#0f1b2d;${bd}">${siteFmtWon(l.total)}</td>
       <td style="padding:10px 12px;text-align:right;${bd}">${siteFmtWon(l.avg)}${siteFmtDiffInline(l.avgDiffMoM)}</td>
@@ -5382,7 +5542,9 @@ function siteDrawChart(key,l,y,m,daysInM){
     const [py,pm]=prevYmKey.split('-').map(Number);
     const prevDaysInM=daysInMonthOf(prevYmKey);
     const prevLots=uploadedLots[prevYmKey]||[];
-    const prevMatch=prevLots.find(pl=>siteNormName(pl)===siteNormName(l) && pl.ct===l.ct);
+    // 계약유형이 바뀌었어도 같은 주차장으로 이어서 비교
+    const prevMergedC=siteFindPrevMerged(prevLots,l);
+    const prevMatch=prevMergedC?{days:prevMergedC.days}:null;
     for(let d=1; d<=daysInM; d++){
       const pd=siteFindSameWeekdayPrevMonth(d,y,m,py,pm,prevDaysInM);
       if(prevMatch && pd){
@@ -5559,7 +5721,7 @@ function computeWeekAgg(dates){
   const dateTo=`${dl.y}-${String(dl.m).padStart(2,'0')}-${String(dl.d).padStart(2,'0')}`;
   pTotal+=getManualSum(dateFrom,dateTo,'parking');
   eTotal+=getManualSum(dateFrom,dateTo,'ev');
-  return {pTotal,eTotal,pAvg:pCnt?pTotal/pCnt:null,eAvg:eCnt?eTotal/eCnt:null,byType,dailyP,dailyE};
+  return {pTotal,eTotal,pCnt,eCnt,pAvg:pCnt?pTotal/pCnt:null,eAvg:eCnt?eTotal/eCnt:null,byType,dailyP,dailyE};
 }
 
 // 증감률 셀 (상승=빨강, 하락=초록 — 대시보드 공통 표기)
@@ -5580,9 +5742,9 @@ function renderWeekView(){
   const B=computeWeekAgg(prevDates);
 
   document.getElementById('wkParkTotal').textContent=fmtMM(A.pTotal);
-  document.getElementById('wkParkAvg').textContent='일평균 '+fmtMil(A.pAvg)+'백만원';
+  document.getElementById('wkParkAvg').textContent='일평균 '+fmtMil(A.pAvg)+'백만원 ('+A.pCnt+'일)';
   document.getElementById('wkEvTotal').textContent=fmtMM(A.eTotal);
-  document.getElementById('wkEvAvg').textContent='일평균 '+fmtMil(A.eAvg)+'백만원';
+  document.getElementById('wkEvAvg').textContent='일평균 '+fmtMil(A.eAvg)+'백만원 ('+A.eCnt+'일)';
 
   const pMoM=B.pTotal>0?pct(A.pTotal,B.pTotal):null;
   const eMoM=B.eTotal>0?pct(A.eTotal,B.eTotal):null;
@@ -5736,7 +5898,7 @@ function computeMonthAgg(ymKey, limitDays){
   const dateFrom=ymKey+'-01', dateTo=ymKey+'-'+String(lim).padStart(2,'0');
   pTotal+=getManualSum(dateFrom,dateTo,'parking');
   eTotal+=getManualSum(dateFrom,dateTo,'ev');
-  return {pTotal,eTotal,pAvg:pCnt?pTotal/pCnt:null,eAvg:eCnt?eTotal/eCnt:null,byType,dailyP,dailyE,daysInM,lim};
+  return {pTotal,eTotal,pCnt,eCnt,pAvg:pCnt?pTotal/pCnt:null,eAvg:eCnt?eTotal/eCnt:null,byType,dailyP,dailyE,daysInM,lim};
 }
 
 let monthChartInst=null, monthChartParkInst=null, monthChartEvInst=null;
@@ -5809,9 +5971,9 @@ function renderMonthView(){
   if(sumLbl) sumLbl.textContent='전체 누적 (주차 · EV) — 1~'+cmpDays+'일 동일 기간 비교';
 
   document.getElementById('moParkTotal').textContent=fmtMM(A.pTotal);
-  document.getElementById('moParkAvg').textContent='일평균 '+fmtMil(A.pAvg)+'백만원';
+  document.getElementById('moParkAvg').textContent='일평균 '+fmtMil(A.pAvg)+'백만원 ('+A.pCnt+'일)';
   document.getElementById('moEvTotal').textContent=fmtMM(A.eTotal);
-  document.getElementById('moEvAvg').textContent='일평균 '+fmtMil(A.eAvg)+'백만원';
+  document.getElementById('moEvAvg').textContent='일평균 '+fmtMil(A.eAvg)+'백만원 ('+A.eCnt+'일)';
 
   const pMoM=B&&B.pTotal>0?pct(Acmp.pTotal,B.pTotal):null;
   const eMoM=B&&B.eTotal>0?pct(Acmp.eTotal,B.eTotal):null;
