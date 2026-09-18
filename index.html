@@ -3147,6 +3147,7 @@ function processParkingRaw(file){
           });
           uploadedLots[key]=dedupeLots(merged);
           applyLatestTypeWithinMonth(key);
+          if(typeof applyDataCorrections==='function') applyDataCorrections();
           siteInvalidateCaches();
           lotCount+=lots.length;
         }
@@ -3909,6 +3910,8 @@ window.addEventListener('load',async()=>{
 
   // 내장 데이터에 이미 섞여 있던 예전/현재 형식 중복분까지 한 번에 정리
   dedupeAllLots();
+  // 업로드 테스트로 들어간 매출 제거
+  if(typeof applyDataCorrections==='function') applyDataCorrections();
 
   // 다운로드 버튼 잠금 표시 반영 (관리자 로그인 전에는 🔒)
   refreshExportLockUI();
@@ -6036,6 +6039,111 @@ const PK_UNSUPPORTED_SHEETS=[
   { label:'2019년', desc:'2019년 일별 이용건수 아카이브 — 위와 동일한 사유로 미지원' }
 ];
 
+// ═══════════════════════════════════════════
+// [엑셀 컬럼/행 순서]
+// ═══════════════════════════════════════════
+// 주차(시간차 일별) 시트 컬럼 순서
+const PK_DAILY_TYPE_ORDER = ['공항철도','SR','광명역','대학교','대형','매입','중소형(관리)','중소형(일반)'];
+// 주차(시간차) 시트 계약유형 행 순서 ('둔산'은 아직 대시보드 데이터에 없지만 생기면 이 자리에 들어갑니다)
+const PK_HOURLY_TYPE_ORDER = ['공항철도','SR','대형','광명역','대학교','매입','둔산','중소형(관리)','중소형(배분)','중소형(일반)'];
+function pkOrderIdx(list, ct){ const i=list.indexOf(ct); return i<0?999:i; }
+
+// ═══════════════════════════════════════════
+// [site 시트 현장 목록·순서]
+// "주차별_이용건수(나이스인프라)" 관리파일의 2026년 블록을 그대로 옮긴 것입니다.
+// 엑셀 컬럼은 이 순서 그대로 만들어지고, 여기 없는 현장은 나오지 않습니다.
+// 매칭은 주차장코드(code)가 1순위라 대시보드상 이름이 달라도 정확히 붙습니다.
+// 현장이 바뀌면 이 목록만 고치면 됩니다.
+// ═══════════════════════════════════════════
+const PK_SITE_LISTS = {
+  '대형': [
+    {code:'NP0BUC', label:'신도림테크노마트'},
+    {code:'NP0A65', label:'수영 주차장'},
+    {code:'NP0A0R', label:'힐스테이트12BL'},
+    {code:'NP0553', label:'두산위브더제니스'},
+    {code:'NP0884', label:'녹색병원'},
+    {code:'NP0A5G', label:'88월드타워'},
+    {code:'NP0251', label:'삼원빌딩'},
+    {code:'NP0AF5', label:'현대차증권'},
+    {code:'NP0577', label:'삼원타워'},
+    {code:'NP0436', label:'정동빌딩'},
+    {code:'NP0480', label:'KB금융부평프라자'},
+    {code:'NP0A2M', label:'미래에셋벤처타워'},
+    {code:'NP0930', label:'KB국민카드청계IT타워'},
+    {code:'NP0862', label:'소래포구'},
+    {code:'NP0ARJ', label:'쥬네브'},
+    {code:'NP0120', label:'우리들'},
+    {code:'NP0158', label:'홍익파크'},
+    {code:'NP0247', label:'종로타워'},
+    {code:'NP0137', label:'시티스퀘어'}
+  ],
+  '대학교': [
+    {code:'NP0690', label:'대학로'},
+    {code:'NP0CTQ', label:'홍문관'},
+    {code:'NP0CDD', label:'3기숙사'},
+    {code:'NP0BN2', label:'동아대구덕'},
+    {code:'NP0A20', label:'성대 인문'},
+    {code:'NP0A21', label:'성대 자연'}
+  ],
+  '매입': [
+    {code:'NP0134', label:'오산그린'},
+    {code:'NP0AR2', label:'해피'},
+    {code:'NP0A64', label:'김포월드'},
+    {code:'NP0004', label:'양주드림'},
+    {code:'NP0091', label:'글로벌'},
+    {code:'NP0190', label:'구리갈매'}
+  ]
+};
+// 주차장코드 → 대시보드상 주차장명 (전체 월을 훑어 한 번만 만들어 둠)
+let _pkCodeNameCache=null;
+function pkCodeNameMap(){
+  if(_pkCodeNameCache) return _pkCodeNameCache;
+  const map={};
+  Object.keys(uploadedLots).sort().forEach(k=>{
+    (uploadedLots[k]||[]).forEach(l=>{ if(l.code && !map[l.code]) map[l.code]=siteNormName(l); });
+  });
+  _pkCodeNameCache=map;
+  return map;
+}
+
+// ═══════════════════════════════════════════
+// [테스트 매출 정정]
+// 업로드 테스트로 서버(Firebase)에 잘못 들어간 매출을 화면·엑셀 양쪽에서 제거합니다.
+// 페이지를 열 때와 RAW 업로드 직후에 자동 적용되므로, Firebase를 직접 건드리지 않아도
+// 링크를 보는 모든 사람에게 동일하게 반영됩니다.
+// 새로 발견되면 아래에 { date, ct, reason } 한 줄만 추가하면 됩니다.
+// ═══════════════════════════════════════════
+const DATA_CORRECTIONS = [
+  { date:'2026-09-01', ct:'SR', reason:'대시보드 업로드 테스트 매출' },
+  { date:'2026-09-11', ct:'SR', reason:'대시보드 업로드 테스트 매출' }
+];
+function applyDataCorrections(){
+  let removed=0;
+  DATA_CORRECTIONS.forEach(c=>{
+    const parts=String(c.date).split('-');
+    if(parts.length!==3) return;
+    const ymKey=parts[0]+'-'+parts[1];
+    const d=parseInt(parts[2],10);
+    const md=ALL_DATA[ymKey];
+    if(!md || !d) return;
+    // ① 유형별 일별 매출에서 제거하고, 같은 금액만큼 그날 전체 주차 매출에서도 뺍니다
+    const arr=md.parkingByType && md.parkingByType[c.ct];
+    const amt=(arr && arr[d-1]) ? arr[d-1] : 0;
+    if(amt>0){
+      arr[d-1]=0;
+      const pRec=md.parking[d-1];
+      if(pRec) pRec.revenue=Math.max(0,(pRec.revenue||0)-amt);
+      removed+=amt;
+    }
+    // ② 개별 주차장 데이터에서도 같은 날짜를 0으로
+    (uploadedLots[ymKey]||[]).forEach(l=>{
+      if(l.ct===c.ct && l.days && l.days[d-1]>0){ removed+=l.days[d-1]; l.days[d-1]=0; }
+    });
+  });
+  if(removed>0) console.log('[applyDataCorrections] 테스트 매출 '+removed.toLocaleString()+'원 제거');
+  return removed;
+}
+
 function pkToggleExportPanel(){
   const wrap=document.getElementById('pkExportPanelWrap');
   const icon=document.getElementById('pkExportToggleIcon');
@@ -6078,7 +6186,9 @@ function pkBuildDailyByTypeSheet(wb, ymKey, sheetName){
   ws.getCell('B2').font={bold:true, size:13};
 
   // 중소형(배분)은 별도 노출하지 않고 중소형(일반)에 합산
-  const types=CONTRACT_TYPES.filter(ct=>ct!=='기타' && ct!=='중소형(배분)');
+  // 컬럼 순서: 공항철도 → SR → 광명역 → 대학교 → 대형 → 매입 → 중소형(관리) → 중소형(일반)
+  const types=CONTRACT_TYPES.filter(ct=>ct!=='기타' && ct!=='중소형(배분)')
+    .sort((a,b)=>pkOrderIdx(PK_DAILY_TYPE_ORDER,a)-pkOrderIdx(PK_DAILY_TYPE_ORDER,b));
   const headerRow=ws.getRow(4);
   headerRow.getCell(2).value='구분';
   headerRow.getCell(3).value='합계\n(나이스파크)';
@@ -6132,20 +6242,47 @@ function pkBuildDailyByTypeSheet(wb, ymKey, sheetName){
 // ── 시트 2~4: 개별 주차장(대형/대학교/매입)별 "연도 전체" 일별 매출 ──────────
 // 기준 월이 속한 연도 전체(1월~12월, 데이터 있는 월까지) 데이터를 보여줍니다.
 // 1행에 주차장 코드, 2행에 주차장명을 배치합니다.
-function pkBuildSiteLevelYearSheet(wb, year, ct, sheetName){
+// baseYmKey(기준월)에 실제로 운영 중인 현장만, 그 달 목록 순서대로 컬럼을 만듭니다.
+// (연중에 해지된 현장은 컬럼에서 빠지고, 과거 일별 실적은 그대로 채워집니다)
+function pkBuildSiteLevelYearSheet(wb, year, ct, sheetName, baseYmKey){
   const DOW=['일','월','화','수','목','금','토'];
-  // 이름을 기준 키로 사용 (코드가 없는 달과 있는 달이 섞여도 같은 주차장으로 인식되도록)
-  const siteMap={};
-  for(let mo=1; mo<=12; mo++){
-    const ymKey=`${year}-${String(mo).padStart(2,'0')}`;
-    const lots=(uploadedLots[ymKey]||[]).filter(l=>l.ct===ct);
-    lots.forEach(l=>{
-      const nameKey=siteNormName(l);
-      if(!siteMap[nameKey]) siteMap[nameKey]={code:l.code||'', siteName:nameKey};
-      else if(!siteMap[nameKey].code && l.code) siteMap[nameKey].code=l.code; // 나중 달에서 코드 발견되면 채워넣음
+  // 기준월에 매출이 있는 현장을 먼저 찾고, 없으면 그 해에서 데이터가 있는 가장 최근 달로 대체
+  function activeLotsOf(ymKey){
+    return (uploadedLots[ymKey]||[]).filter(l=>{
+      if(l.ct!==ct) return false;
+      let sum=0; (l.days||[]).forEach(v=>{ sum+=v||0; });
+      return sum>0;
     });
   }
-  const sites=Object.values(siteMap);
+  let baseLots = baseYmKey ? activeLotsOf(baseYmKey) : [];
+  if(!baseLots.length){
+    for(let mo=12; mo>=1 && !baseLots.length; mo--){
+      baseLots = activeLotsOf(`${year}-${String(mo).padStart(2,'0')}`);
+    }
+  }
+  let sites;
+  const fixedList = (typeof PK_SITE_LISTS!=='undefined') ? PK_SITE_LISTS[ct] : null;
+  if(fixedList && fixedList.length){
+    // 이용건수 관리파일의 현장 목록·순서를 그대로 사용
+    const codeName=pkCodeNameMap();
+    sites=fixedList.map(f=>({ code:f.code, siteName:f.label, matchName:codeName[f.code]||null }));
+  } else {
+    // 목록이 없는 유형(광명역 등)은 기준월 운영 현장 기준
+    const siteMap={};
+    baseLots.forEach(l=>{
+      const nameKey=siteNormName(l);
+      if(!siteMap[nameKey]) siteMap[nameKey]={code:l.code||'', siteName:nameKey, matchName:nameKey};
+      else if(!siteMap[nameKey].code && l.code) siteMap[nameKey].code=l.code;
+    });
+    for(let mo=1; mo<=12; mo++){
+      const lots=(uploadedLots[`${year}-${String(mo).padStart(2,'0')}`]||[]).filter(l=>l.ct===ct);
+      lots.forEach(l=>{
+        const nk=siteNormName(l);
+        if(siteMap[nk] && !siteMap[nk].code && l.code) siteMap[nk].code=l.code;
+      });
+    }
+    sites=Object.values(siteMap);
+  }
   const ws=wb.addWorksheet(sheetName);
   if(!sites.length){
     ws.getCell('A1').value=`${year}년에는 "${ct}" 개별 주차장 데이터가 없습니다.`;
@@ -6171,7 +6308,15 @@ function pkBuildSiteLevelYearSheet(wb, year, ct, sheetName){
     c.font={bold:true, color:{argb:'FFFFFFFF'}};
     c.fill={type:'pattern', pattern:'solid', fgColor:{argb:'FF0F1B2D'}};
     c.alignment={horizontal:'center', vertical:'middle'};
+    // 대시보드상 이름이 다르면 메모로 남겨 대조할 수 있게
+    if(s.matchName && s.matchName!==s.siteName) c.note='대시보드: '+s.matchName;
+    else if(s.code && !s.matchName) c.note='대시보드에 해당 코드('+s.code+') 데이터 없음';
   });
+  const totCell=ws.getCell(2, 3+sites.length);
+  totCell.value='합계';
+  totCell.font={bold:true, color:{argb:'FFFFFFFF'}};
+  totCell.fill={type:'pattern', pattern:'solid', fgColor:{argb:'FF334155'}};
+  totCell.alignment={horizontal:'center', vertical:'middle'};
   [1,2].forEach(col=>{
     [1,2].forEach(rr=>{
       const c=ws.getCell(rr,col);
@@ -6191,20 +6336,29 @@ function pkBuildSiteLevelYearSheet(wb, year, ct, sheetName){
       const row=ws.getRow(rowIdx);
       row.getCell(1).value=`${mo}/${d}`;
       row.getCell(2).value=dow;
+      let dayTotal=0;
       sites.forEach((s,i)=>{
-        const match=lots.find(l=>l.ct===ct && siteNormName(l)===s.siteName);
+        // ① 주차장코드로 매칭(계약유형이 바뀌어도 이어짐) ② 코드가 없으면 이름으로
+        let match = s.code ? lots.find(l=>l.code===s.code) : null;
+        if(!match){
+          const nm = s.matchName || s.siteName;
+          match = lots.find(l=>l.ct===ct && siteNormName(l)===nm);
+        }
         const raw=match?(match.days[d-1]||0):0;
-        row.getCell(3+i).value=raw>0?Math.round(vex(raw)):0;
+        const val=raw>0?Math.round(vex(raw)):0;
+        row.getCell(3+i).value=val;
+        dayTotal+=val;
       });
+      row.getCell(3+sites.length).value=dayTotal;
       if(dow==='토'||dow==='일'){
-        for(let c=1;c<=2+sites.length;c++) row.getCell(c).font={color:{argb:'FFDC2626'}};
+        for(let c=1;c<=3+sites.length;c++) row.getCell(c).font={color:{argb:'FFDC2626'}};
       }
       rowIdx++;
     }
   }
 
-  ws.columns=[{width:7},{width:6}, ...sites.map(()=>({width:14}))];
-  sites.forEach((s,i)=>{ ws.getColumn(3+i).numFmt='#,##0'; });
+  ws.columns=[{width:7},{width:6}, ...sites.map(()=>({width:14})), {width:15}];
+  for(let i=0;i<=sites.length;i++) ws.getColumn(3+i).numFmt='#,##0';
   return ws;
 }
 
@@ -6265,11 +6419,13 @@ function pkBuildHourlyByYearSheet(wb, sheetName, maxWeeks){
     const key=l.ct+'|'+(l.yearLabel||'—');
     if(!seen.has(key)){ seen.add(key); combos.push({ct:l.ct, yearLabel:l.yearLabel||'—', year:l.year}); }
   });
+  // 계약유형은 지정된 순서로, 같은 유형 안에서는 계약연도 오름차순
   combos.sort((a,b)=>{
-    const ti=LOT_EXTRACT_TYPES.indexOf(a.ct)-LOT_EXTRACT_TYPES.indexOf(b.ct);
+    const ti=pkOrderIdx(PK_HOURLY_TYPE_ORDER,a.ct)-pkOrderIdx(PK_HOURLY_TYPE_ORDER,b.ct);
     if(ti!==0) return ti;
-    const ay=a.year==null?9999:a.year, by=b.year==null?9999:b.year;
-    return ay-by;
+    const ay=(a.year==null||a.year===0)?9999:a.year, by=(b.year==null||b.year===0)?9999:b.year;
+    if(ay!==by) return ay-by;
+    return String(a.yearLabel).localeCompare(String(b.yearLabel));
   });
 
   const header=ws.getRow(1);
@@ -6363,12 +6519,12 @@ async function pkExportCombined(ymKey){
   const year=parseInt(ymKey.split('-')[0]);
 
   pkBuildDailyByTypeSheet(wb, ymKey, '주차(시간차 일별)');
-  pkBuildSiteLevelYearSheet(wb, year, '대형', '주차(대형site)');
-  pkBuildSiteLevelYearSheet(wb, year, '대학교', '주차(대학교)');
-  pkBuildSiteLevelYearSheet(wb, year, '매입', '주차(매입)');
+  pkBuildSiteLevelYearSheet(wb, year, '대형', '주차(대형site)', ymKey);
+  pkBuildSiteLevelYearSheet(wb, year, '대학교', '주차(대학교)', ymKey);
+  pkBuildSiteLevelYearSheet(wb, year, '매입', '주차(매입)', ymKey);
   pkBuildHourlyByYearSheet(wb, '주차(시간차)', 8);
   pkBuildSiteCountSheet(wb, '주차(site 수)');
-  pkBuildSiteLevelYearSheet(wb, year, '광명역', '주차(광명역site)');
+  pkBuildSiteLevelYearSheet(wb, year, '광명역', '주차(광명역site)', ymKey);
 
   PK_UNSUPPORTED_SHEETS.forEach(t=>{
     pkBuildPlaceholderSheet(wb, t.label, t.desc);
