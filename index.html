@@ -3005,6 +3005,9 @@ function processParkingRaw(file){
       const sheetLog=[];
       let sheetCount=0, lotCount=0;
       const affectedMonths=new Set();
+      // 계약유형이 비었거나 #N/A라서 집계에서 빠지는 행을 추적합니다 (예전엔 조용히 버려졌음)
+      const droppedRows=[];   // {code, name, sum}
+      const rescuedRows=[];   // 코드로 계약유형을 복구한 행
 
       wb.SheetNames.forEach(sn=>{
         // "비교" 시트(주차장코드가 세로 아닌 가로로 배치된 전혀 다른 구조)와
@@ -3072,15 +3075,26 @@ function processParkingRaw(file){
         }
 
         const byType={};CONTRACT_TYPES.forEach(ct=>{byType[ct]=Array(32).fill(0);});
-        const lots=[];const seen=new Set();
+        const lots=[];const seenMap={};
 
         for(let ri=hIdx+1;ri<rows.length;ri++){
           const row=rows[ri];
           if(!row||row[1]==null||row[1]==='')continue;
-          const ct=getCtGroup(row[CT_COL]);
-          if(!ct)continue;
           const gbn=String(row[GBN_COL]||'').trim();
           if(gbn!=='합계')continue;
+          const rowCode=String(row[1]||'').trim();
+          let ct=getCtGroup(row[CT_COL]);
+          if(!ct){
+            // ───────────────────────────────────────────
+            // 계약유형 칸이 비었거나 #N/A(VLOOKUP 실패 등)인 행.
+            // 예전엔 이 행을 통째로 버려서 매출 합계에도, 주차장별에도 안 들어갔습니다.
+            // → 주차장코드가 관리 목록(PK_SITE_LISTS)에 있으면 그 유형으로 복구합니다.
+            // ───────────────────────────────────────────
+            const fixCt=(typeof pkCodeTypeOf==='function')?pkCodeTypeOf(rowCode):null;
+            let rowSum=0; for(const ci of Object.keys(dayColMap)) rowSum+=Number(row[ci])||0;
+            if(fixCt){ ct=fixCt; rescuedRows.push({code:rowCode,name:String(row[NAME_COL]||'').trim(),ct,sum:rowSum}); }
+            else { if(rowSum>0) droppedRows.push({code:rowCode,name:String(row[NAME_COL]||'').trim(),raw:String(row[CT_COL]==null?'(빈칸)':row[CT_COL]),sum:rowSum}); continue; }
+          }
 
           for(const[ci,d]of Object.entries(dayColMap)){
             const v=Number(row[ci])||0;
@@ -3089,18 +3103,28 @@ function processParkingRaw(file){
           if(LOT_EXTRACT_TYPES.includes(ct)){
             const name=String(row[NAME_COL]||'').trim();
             if(!name||name.length<2)continue;
-            const k2=name+'__'+ct;
-            if(seen.has(k2))continue;seen.add(k2);
             const days=Array(32).fill(0);let hasData=false;
             for(const[ci,d]of Object.entries(dayColMap)){
               const v=Number(row[ci])||0;days[d-1]=v;if(v>0)hasData=true;
             }
-            if(hasData){
-              const yearRaw=String(row[YEAR_COL]||'').trim();
-              const yearInfo=parseContractYear(yearRaw);
-              const code=String(row[1]||'').trim();
-              lots.push({name:`${name} (${ct})`,siteName:name,ct,code,year:yearInfo.year,yearLabel:yearInfo.label,days});
+            if(!hasData) continue;
+            // ───────────────────────────────────────────
+            // 같은 주차장이 RAW에 여러 행으로 나오는 경우(세부 계약 등)
+            // 예전엔 "이름"이 같으면 두 번째 행을 버려서 주차장별 매출이 유형 합계보다 작게 잡혔습니다.
+            // → 주차장코드(없으면 이름) 기준으로 묶고, 행이 여러 개면 일자별로 더합니다.
+            //   (유형별 합계 byType도 모든 행을 더하므로 양쪽 숫자가 일치하게 됩니다)
+            // ───────────────────────────────────────────
+            const k2=(rowCode?('C:'+rowCode):('N:'+name))+'__'+ct;
+            const exist=seenMap[k2];
+            if(exist){
+              for(let i=0;i<32;i++) exist.days[i]=(exist.days[i]||0)+(days[i]||0);
+              continue;
             }
+            const yearRaw=String(row[YEAR_COL]||'').trim();
+            const yearInfo=parseContractYear(yearRaw);
+            const rec={name:`${name} (${ct})`,siteName:name,ct,code:rowCode,year:yearInfo.year,yearLabel:yearInfo.label,days};
+            seenMap[k2]=rec;
+            lots.push(rec);
           }
         }
 
@@ -3176,7 +3200,21 @@ function processParkingRaw(file){
         cloudMsg='\n⚠️ 관리자로 로그인되어 있지 않아 이 브라우저에만 반영되었습니다. 서버에 반영하려면 관리자 로그인 후 다시 업로드하세요.';
       }
       const logMsg=sheetLog.length?'\n\n처리 실패:\n'+sheetLog.slice(0,5).join('\n'):'';
-      alert(`✅ 주차 RAW 업로드 완료!\n처리 시트: ${sheetCount}개\n대형/대학교 주차장: ${lotCount}개 추출${cloudMsg}${logMsg}`);
+      let fixMsg='';
+      if(rescuedRows.length){
+        fixMsg+='\n\n🔧 계약유형이 비어 있던 행을 주차장코드로 복구: '+rescuedRows.length+'건'
+          + '\n   '+rescuedRows.slice(0,5).map(r=>r.name+'('+r.code+'→'+r.ct+')').join(', ');
+        console.log('[RAW] 계약유형 복구 행', rescuedRows);
+      }
+      if(droppedRows.length){
+        const dropSum=droppedRows.reduce((a,r)=>a+r.sum,0);
+        fixMsg+='\n\n⚠️ 계약유형이 비었거나 #N/A라 집계에서 빠진 행: '+droppedRows.length+'건 ('+Math.round(dropSum).toLocaleString()+'원)'
+          + '\n   '+droppedRows.slice(0,5).map(r=>r.name+'('+(r.code||'코드없음')+')').join(', ')
+          + (droppedRows.length>5?' 외 '+(droppedRows.length-5)+'건':'')
+          + '\n   → RAW의 계약유형 칸을 채우거나 PK_SITE_LISTS에 코드를 추가하면 반영됩니다.';
+        console.warn('[RAW] 계약유형 누락으로 빠진 행', droppedRows);
+      }
+      alert(`✅ 주차 RAW 업로드 완료!\n처리 시트: ${sheetCount}개\n주차장별 데이터: ${lotCount}개 추출${cloudMsg}${logMsg}${fixMsg}`);
     }catch(err){
       console.error(err);
       alert('❌ 주차 파일 오류: '+err.message);
@@ -4980,6 +5018,8 @@ function dedupeAllLots(){
 // ═══════════════════════════════════════════
 let siteFirstMonthCache=null, siteTypeStartCache=null, siteCodeFirstCache=null;
 function siteInvalidateCaches(){
+  if(typeof _pkCodeNamesCache!=='undefined') _pkCodeNamesCache=null;
+  if(typeof _pkCodeNameCache!=='undefined') _pkCodeNameCache=null;
   siteFirstMonthCache=null; siteTypeStartCache=null; siteCodeFirstCache=null;
   siteYearMapCache=null; siteYearMapKey=null;
 }
@@ -6094,6 +6134,28 @@ const PK_SITE_LISTS = {
     {code:'NP0190', label:'구리갈매'}
   ]
 };
+// 주차장코드 → 관리 목록상 계약유형 (RAW에서 계약유형이 비어 있을 때 복구용)
+function pkCodeTypeOf(code){
+  if(!code || typeof PK_SITE_LISTS==='undefined') return null;
+  for(const ct in PK_SITE_LISTS){
+    if(PK_SITE_LISTS[ct].some(f=>f.code===code)) return ct;
+  }
+  return null;
+}
+// 주차장코드 → 지금까지 그 코드로 쓰인 모든 주차장명 (이름이 바뀐 달도 찾기 위함)
+let _pkCodeNamesCache=null;
+function pkCodeNamesMap(){
+  if(_pkCodeNamesCache) return _pkCodeNamesCache;
+  const map={};
+  Object.keys(uploadedLots).forEach(k=>{
+    (uploadedLots[k]||[]).forEach(l=>{
+      if(!l.code) return;
+      (map[l.code]=map[l.code]||new Set()).add(siteNormName(l));
+    });
+  });
+  _pkCodeNamesCache=map;
+  return map;
+}
 // 주차장코드 → 대시보드상 주차장명 (전체 월을 훑어 한 번만 만들어 둠)
 let _pkCodeNameCache=null;
 function pkCodeNameMap(){
@@ -6242,6 +6304,22 @@ function pkBuildDailyByTypeSheet(wb, ymKey, sheetName){
 // ── 시트 2~4: 개별 주차장(대형/대학교/매입)별 "연도 전체" 일별 매출 ──────────
 // 기준 월이 속한 연도 전체(1월~12월, 데이터 있는 월까지) 데이터를 보여줍니다.
 // 1행에 주차장 코드, 2행에 주차장명을 배치합니다.
+// 한 달치 lots 에서 특정 현장(s)에 해당하는 레코드를 모두 찾아 돌려줍니다.
+function pkRecordsForSite(lots, s, ct){
+  const out=[];
+  if(s.code){
+    lots.forEach(l=>{ if(l.code===s.code) out.push(l); });
+    const names=(typeof pkCodeNamesMap==='function')?pkCodeNamesMap()[s.code]:null;
+    if(names){
+      lots.forEach(l=>{ if(!l.code && names.has(siteNormName(l))) out.push(l); });
+    }
+  }
+  if(!out.length){
+    const nm=s.matchName||s.siteName;
+    lots.forEach(l=>{ if(l.ct===ct && siteNormName(l)===nm) out.push(l); });
+  }
+  return out;
+}
 // baseYmKey(기준월)에 실제로 운영 중인 현장만, 그 달 목록 순서대로 컬럼을 만듭니다.
 // (연중에 해지된 현장은 컬럼에서 빠지고, 과거 일별 실적은 그대로 채워집니다)
 function pkBuildSiteLevelYearSheet(wb, year, ct, sheetName, baseYmKey){
@@ -6338,13 +6416,16 @@ function pkBuildSiteLevelYearSheet(wb, year, ct, sheetName, baseYmKey){
       row.getCell(2).value=dow;
       let dayTotal=0;
       sites.forEach((s,i)=>{
-        // ① 주차장코드로 매칭(계약유형이 바뀌어도 이어짐) ② 코드가 없으면 이름으로
-        let match = s.code ? lots.find(l=>l.code===s.code) : null;
-        if(!match){
-          const nm = s.matchName || s.siteName;
-          match = lots.find(l=>l.ct===ct && siteNormName(l)===nm);
-        }
-        const raw=match?(match.days[d-1]||0):0;
+        // ───────────────────────────────────────────
+        // 주차장코드 기준으로 그 달의 레코드를 "전부" 모읍니다.
+        //  ① 코드가 같은 레코드 (계약유형이 달라도 포함)
+        //  ② 코드가 없는 예전 형식 레코드 중, 그 코드로 쓰인 적 있는 이름과 같은 것
+        // 같은 날짜에 여러 레코드가 있으면 중복 기록일 수 있어 큰 값 하나만 씁니다.
+        // (예전엔 find()로 첫 번째 하나만 잡아서 나머지가 빠질 수 있었음)
+        // ───────────────────────────────────────────
+        const recs=pkRecordsForSite(lots, s, ct);
+        let raw=0;
+        recs.forEach(r=>{ const v=(r.days&&r.days[d-1])||0; if(v>raw) raw=v; });
         const val=raw>0?Math.round(vex(raw)):0;
         row.getCell(3+i).value=val;
         dayTotal+=val;
