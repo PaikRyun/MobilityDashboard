@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <title>NICE인프라 모빌리티 대시보드</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js">
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -725,6 +726,8 @@ input[type=file]{display:none}
   </div>
   <span id="adminStatusBadge" style="display:none"></span>
   <div class="topbar-right">
+    <button class="btn-icon" id="capCopyBtn" onclick="captureMainDashboard('copy')" style="background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.3)" title="메인 대시보드(하단 매출추이 차트 제외)를 이미지로 클립보드에 복사 → 메일 본문에 Ctrl+V">📋 이미지 복사</button>
+    <button class="btn-icon" id="capSaveBtn" onclick="captureMainDashboard('download')" style="background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.3)" title="메인 대시보드(하단 매출추이 차트 제외)를 PNG 파일로 저장">🖼️ 이미지 저장</button>
     <button class="btn-icon" onclick="printDashboard()" style="background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.3)" title="현재 화면 인쇄/PDF 저장">🖨️ 인쇄</button>
     <button class="btn-icon green" data-admin-export="1" onclick="downloadData()">💾 백업</button>
     <button class="btn-icon" data-admin-export="1" onclick="exportExcel()" style="background:rgba(5,150,105,.25);border-color:rgba(16,185,129,.4)" title="현재 데이터 Excel 출력">📊 Excel 출력</button>
@@ -1051,8 +1054,8 @@ input[type=file]{display:none}
       </div>
     </div>
 
-    <!-- Row 3: 주차 매출 추이 -->
-    <div class="row-full">
+    <!-- Row 3: 주차 매출 추이 (화면 캡처 이미지에서는 제외) -->
+    <div class="row-full" data-capture-exclude="1">
       <div class="chart-card">
         <div class="chart-card-header">
           <div class="chart-card-title"><span class="chart-dot blue"></span>주차 매출 추이 (VAT별도) — <span id="chartMonthP">—</span></div>
@@ -1066,8 +1069,8 @@ input[type=file]{display:none}
       </div>
     </div>
 
-    <!-- Row 4: EV 매출 추이 -->
-    <div class="row-full">
+    <!-- Row 4: EV 매출 추이 (화면 캡처 이미지에서는 제외) -->
+    <div class="row-full" data-capture-exclude="1">
       <div class="chart-card">
         <div class="chart-card-header">
           <div class="chart-card-title"><span class="chart-dot green"></span>EV 매출 추이 (VAT별도) — <span id="chartMonthE">—</span></div>
@@ -1809,6 +1812,83 @@ function switchTab(id,btn){
     if(viewModeSeg) viewModeSeg.style.display='none';
   }
 }
+// ─────────────────────────────────────────────────────────────
+// 메인 대시보드 이미지 캡처 (대표님 보고 메일용)
+//  - 모빌리티 탭 > 일간 화면 전체를 한 장의 PNG로 만듭니다.
+//  - 하단 "주차 매출 추이 / EV 매출 추이" 차트(data-capture-exclude)는 빠집니다.
+//  - 맨 위에 "기준일" 제목 줄을 붙입니다.
+//  - mode: 'copy' → 클립보드 복사(메일 본문에 바로 붙여넣기), 'download' → PNG 저장
+// ─────────────────────────────────────────────────────────────
+async function captureMainDashboard(mode){
+  const view=document.getElementById('dayModeView');
+  const mob=document.getElementById('mobility');
+  if(typeof html2canvas!=='function'){ alert('이미지 캡처 모듈을 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 새로고침해주세요.'); return; }
+  if(!mob||!mob.classList.contains('active')||!view||view.offsetParent===null){
+    alert('모빌리티 탭의 "일간" 화면에서 사용할 수 있습니다.\n왼쪽 메뉴에서 📊 모빌리티 → 일간을 선택한 뒤 다시 눌러주세요.');
+    return;
+  }
+  document.getElementById('calPopup')?.classList.remove('open');
+  document.getElementById('rawPopup')?.classList.remove('open');
+  const btns=[document.getElementById('capCopyBtn'),document.getElementById('capSaveBtn')];
+  const oldTxt=btns.map(b=>b&&b.textContent);
+  btns.forEach(b=>{ if(b){ b.disabled=true; b.style.opacity='.6'; } });
+  const clickedBtn=mode==='copy'?btns[0]:btns[1];
+  if(clickedBtn) clickedBtn.textContent='⏳ 생성 중…';
+  const restore=()=>btns.forEach((b,i)=>{ if(b){ b.disabled=false; b.style.opacity=''; b.textContent=oldTxt[i]; } });
+  try{
+    const dateTxt=(document.getElementById('dateBadgeBtn')?.textContent||'').trim();
+    const scale=2;
+    const body=await html2canvas(view,{
+      scale, useCORS:true, backgroundColor:'#f1f5f9', logging:false,
+      ignoreElements:el=>!!(el.dataset&&el.dataset.captureExclude)
+    });
+    // 위쪽에 제목 줄을 붙인 최종 이미지 만들기
+    const headH=54*scale;
+    const out=document.createElement('canvas');
+    out.width=body.width; out.height=body.height+headH;
+    const g=out.getContext('2d');
+    const grd=g.createLinearGradient(0,0,out.width,0);
+    grd.addColorStop(0,'#0f1b2d'); grd.addColorStop(1,'#1e3a5f');
+    g.fillStyle=grd; g.fillRect(0,0,out.width,headH);
+    g.fillStyle='#ffffff'; g.textBaseline='middle';
+    g.font=`700 ${18*scale}px "Pretendard","Malgun Gothic","Apple SD Gothic Neo",sans-serif`;
+    g.fillText('NICE인프라 모빌리티 대시보드',20*scale,headH/2);
+    g.font=`600 ${14*scale}px "Pretendard","Malgun Gothic","Apple SD Gothic Neo",sans-serif`;
+    g.textAlign='right';
+    g.fillText((dateTxt?dateTxt+' 기준':''),out.width-20*scale,headH/2);
+    g.textAlign='left';
+    g.drawImage(body,0,headH);
+    const blob=await new Promise(res=>out.toBlob(res,'image/png'));
+    if(!blob) throw new Error('이미지 생성 실패');
+    const fname='모빌리티대시보드_'+(dateTxt.replace(/[^0-9]+/g,'-').replace(/^-|-$/g,'')||'capture')+'.png';
+    const doDownload=()=>{
+      const a=document.createElement('a');
+      a.href=URL.createObjectURL(blob); a.download=fname;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    };
+    if(mode==='copy'){
+      try{
+        if(!navigator.clipboard||typeof ClipboardItem==='undefined') throw new Error('clipboard unsupported');
+        await navigator.clipboard.write([new ClipboardItem({'image/png':blob})]);
+        restore();
+        if(clickedBtn){ clickedBtn.textContent='✅ 복사됨'; setTimeout(()=>{clickedBtn.textContent=oldTxt[0];},2000); }
+        return;
+      }catch(e){
+        console.warn('clipboard copy failed',e);
+        doDownload();
+        alert('이 브라우저에서는 이미지 복사가 막혀 있어 PNG 파일로 대신 저장했습니다.\n(크롬/엣지 최신 버전에서는 복사가 됩니다)');
+      }
+    } else {
+      doDownload();
+    }
+  }catch(err){
+    console.error('capture error',err);
+    alert('이미지 생성 중 오류가 발생했습니다: '+err.message);
+  }
+  restore();
+}
+
 function printDashboard(){
   // 인쇄 전 열려있는 팝업류 닫기 (캘린더, RAW 업로드 팝오버 등)
   document.getElementById('calPopup')?.classList.remove('open');
