@@ -3059,7 +3059,21 @@ function processParkingRaw(file){
           for(let d=1;d<=daysInMonth;d++)dayColMap[9+d]=d;
         }
 
-        const CT_COL=4,NAME_COL=2,GBN_COL=7,YEAR_COL=5;
+        // 열 위치를 헤더 이름으로 찾습니다 (못 찾으면 기존 고정 위치 사용)
+        const _hn=hRow.map(c=>String(c==null?'':c).replace(/\s/g,''));
+        const _hf=(pred,def)=>{const i=_hn.findIndex(pred);return i>=0?i:def;};
+        const CODE_COL=_hf(h=>h==='주차장코드',1);
+        const NAME_COL=_hf(h=>h==='주차장명',2);
+        const GBN_COL=_hf(h=>h.startsWith('구분(합계)')||h==='구분(합계)',7);
+        const CT_COL=_hf(h=>h==='구분'||h==='계약유형'||h==='계약형태',4);
+        const YEAR_COL=_hf(h=>h.includes('계약연도')||h.includes('계약년도'),5);
+        // 구분(합계) 칸 형식 판별:
+        //  ① 템플릿 형식: 주차장마다 여러 행(시간/정기/…/합계)이 있고 "합계"라고 적힌 행만 사용
+        //  ② 단일행 형식: 주차장당 1행이고 구분(합계) 칸에 "합계 금액(숫자)"이 들어 있음
+        //     → "합계" 글자가 한 번도 없으면 ②로 보고 모든 행을 사용합니다.
+        let _hasSumLabel=false;
+        for(let ri=hIdx+1;ri<rows.length;ri++){const rr=rows[ri];if(rr&&String(rr[GBN_COL]==null?'':rr[GBN_COL]).trim()==='합계'){_hasSumLabel=true;break;}}
+        let parsedRows=0;
         if(!ALL_DATA[key]){
           const daysInMonth=new Date(y,m,0).getDate();
           const DOW=['일','월','화','수','목','금','토'];
@@ -3079,10 +3093,13 @@ function processParkingRaw(file){
 
         for(let ri=hIdx+1;ri<rows.length;ri++){
           const row=rows[ri];
-          if(!row||row[1]==null||row[1]==='')continue;
-          const gbn=String(row[GBN_COL]||'').trim();
-          if(gbn!=='합계')continue;
-          const rowCode=String(row[1]||'').trim();
+          if(!row||row[CODE_COL]==null||row[CODE_COL]==='')continue;
+          const gbnRaw=row[GBN_COL];
+          const gbn=String(gbnRaw==null?'':gbnRaw).trim();
+          if(_hasSumLabel){ if(gbn!=='합계')continue; }
+          else if(gbn!=='' && isNaN(Number(String(gbn).replace(/,/g,'')))) continue; // 숫자/빈칸이 아닌 세부행(시간·정기 등)은 제외
+          const rowCode=String(row[CODE_COL]||'').trim();
+          parsedRows++;
           let ct=getCtGroup(row[CT_COL]);
           if(!ct){
             // ───────────────────────────────────────────
@@ -3128,6 +3145,10 @@ function processParkingRaw(file){
           }
         }
 
+        if(!parsedRows){
+          sheetLog.push(`"${sn}": 읽을 수 있는 주차장 행이 0개 (구분(합계) 칸/열 위치를 확인해주세요) → 이 시트는 반영·저장하지 않음`);
+          return;
+        }
         CONTRACT_TYPES.forEach(ct=>{
           if(!byType[ct])return;
           if(!ALL_DATA[key].parkingByType[ct])
@@ -3183,6 +3204,10 @@ function processParkingRaw(file){
       annualDrawn=false;
       updateMobility();
 
+      if(!affectedMonths.size){
+        alert('❌ 주차 RAW 업로드 실패: 반영된 데이터가 없습니다 (서버에도 저장하지 않았습니다)\n\n'+sheetLog.slice(0,5).join('\n'));
+        return;
+      }
       let cloudMsg='';
       if(fbReady && adminUnlocked){
         const failed=[];
