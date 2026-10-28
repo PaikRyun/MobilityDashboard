@@ -3088,6 +3088,7 @@ function processParkingRaw(file){
       // 계약유형이 비었거나 #N/A라서 집계에서 빠지는 행을 추적합니다 (예전엔 조용히 버려졌음)
       const droppedRows=[];   // {code, name, sum}
       const rescuedRows=[];   // 코드로 계약유형을 복구한 행
+      const futureSkipped=[]; // 오늘 이후 날짜라 제외한 매출
 
       wb.SheetNames.forEach(sn=>{
         // "비교" 시트(주차장코드가 세로 아닌 가로로 배치된 전혀 다른 구조)와
@@ -3137,6 +3138,32 @@ function processParkingRaw(file){
         if(!Object.keys(dayColMap).length){
           const daysInMonth=new Date(y,m,0).getDate();
           for(let d=1;d<=daysInMonth;d++)dayColMap[9+d]=d;
+        }
+
+        // ───────────────────────────────────────────
+        // [미래 날짜 방어] 오늘(이 PC 날짜) 이후 날짜 열은 업로드에서 제외합니다.
+        // 예전에 테스트/예측 값이 아직 오지 않은 날짜(예: 10/27~31)로 서버에 저장돼
+        // 실제 매출처럼 대시보드에 표시되는 문제가 있었습니다.
+        // ───────────────────────────────────────────
+        {
+          const _now=new Date();
+          const _today=new Date(_now.getFullYear(),_now.getMonth(),_now.getDate());
+          const _futCols=Object.keys(dayColMap).filter(ci=>new Date(y,m-1,dayColMap[ci])>_today);
+          if(_futCols.length){
+            let _futSum=0, _futRows=0;
+            for(let ri=hIdx+1;ri<rows.length;ri++){
+              const rr=rows[ri]; if(!rr) continue;
+              let s=0; _futCols.forEach(ci=>{ s+=Number(rr[ci])||0; });
+              if(s>0){ _futSum+=s; _futRows++; }
+            }
+            const _days=_futCols.map(ci=>dayColMap[ci]).sort((p,q)=>p-q);
+            _futCols.forEach(ci=>{ delete dayColMap[ci]; });
+            if(_futSum>0){
+              futureSkipped.push(`"${sn}": ${m}/${_days[0]}~${m}/${_days[_days.length-1]} (${_futRows}행, ${Math.round(_futSum).toLocaleString()}원)`);
+              console.warn('[RAW] 오늘 이후 날짜 매출 제외', sn, _days, _futSum);
+            }
+          }
+          if(!Object.keys(dayColMap).length){ sheetLog.push(`"${sn}": 오늘 이후 날짜만 있는 시트라 건너뜀`); return; }
         }
 
         // 열 위치를 헤더 이름으로 찾습니다 (못 찾으면 기존 고정 위치 사용)
@@ -3306,6 +3333,9 @@ function processParkingRaw(file){
       }
       const logMsg=sheetLog.length?'\n\n처리 실패:\n'+sheetLog.slice(0,5).join('\n'):'';
       let fixMsg='';
+      if(futureSkipped.length){
+        fixMsg+='\n\n🚫 오늘 이후 날짜의 매출은 반영하지 않았습니다:\n   '+futureSkipped.slice(0,5).join('\n   ');
+      }
       if(rescuedRows.length){
         fixMsg+='\n\n🔧 계약유형이 비어 있던 행을 주차장코드로 복구: '+rescuedRows.length+'건'
           + '\n   '+rescuedRows.slice(0,5).map(r=>r.name+'('+r.code+'→'+r.ct+')').join(', ');
@@ -3776,6 +3806,7 @@ function checkPw(){
   if(idRaw.toLowerCase()===ADMIN_ID.toLowerCase() && pw===ADMIN_PW){
     adminUnlocked=true;
     updateAdminBadge();
+    if(typeof persistFake202610Fix==='function') persistFake202610Fix();
     const m=document.getElementById('pwModal');
     m.classList.remove('show');
     m.style.cssText='';
@@ -4055,6 +4086,8 @@ window.addEventListener('load',async()=>{
   dedupeAllLots();
   // 업로드 테스트로 들어간 매출 제거
   if(typeof applyDataCorrections==='function') applyDataCorrections();
+  // 2026-10 서버에 들어간 가짜 매출 제거 (화면에서 즉시 반영, 서버 저장은 관리자 로그인 시)
+  if(typeof removeFake202610==='function') removeFake202610();
 
   // 다운로드 버튼 잠금 표시 반영 (관리자 로그인 전에는 🔒)
   refreshExportLockUI();
@@ -6284,6 +6317,64 @@ const DATA_CORRECTIONS = [
   { date:'2026-09-01', ct:'SR', reason:'대시보드 업로드 테스트 매출' },
   { date:'2026-09-11', ct:'SR', reason:'대시보드 업로드 테스트 매출' }
 ];
+// ═══════════════════════════════════════════
+// [가짜 매출 정리] 2026-10 서버 데이터에 들어간 테스트성 값 제거 (2026-10-27 확인)
+// - 제주대학교병원 등 11개 주차장에 10/21~31 하루 50만~200만 원대의 값이 들어가
+//   RAW에 없는 매출이 전주대비·일별 화면에 표시되었습니다. (10/27~31은 아직 오지 않은 날짜)
+// - 아래 숫자와 "정확히 같은 값"만 0으로 지웁니다. 나중에 실제 매출이 올라오면 값이 달라서 건드리지 않습니다.
+// - 모든 날짜가 가짜였던 주차장(제주대학교병원 등)은 목록에서 빠집니다.
+// - 관리자로 로그인하면 정리된 결과를 서버에 한 번 저장합니다. 저장 후에는 이 블록을 지워도 됩니다.
+// ═══════════════════════════════════════════
+const FAKE_2026_10 = {"fakeLots": {"AB0002": {"21": 1087573, "22": 1151026, "23": 1120755, "24": 1115693, "25": 1115893, "26": 1092415, "27": 1123476, "28": 1135477, "29": 1145600, "30": 1149932, "31": 1170655}, "AB0003": {"21": 1297279, "22": 1311665, "23": 1223591, "24": 1271145, "25": 1276101, "26": 1279462, "27": 1247007, "28": 1240968, "29": 1222349, "30": 1243663, "31": 1313886}, "AM0043": {"21": 1656544, "22": 1634402, "23": 1662865, "24": 1611174, "25": 1625218, "26": 1695675, "27": 1624755, "28": 1642096, "29": 1649137, "30": 1695492, "31": 1617641}, "AM0113": {"21": 1716385, "22": 1722897, "23": 1752757, "24": 1745128, "25": 1742051, "26": 1741550, "27": 1681212, "28": 1678002, "29": 1676178, "30": 1765330, "31": 1767041}, "AM0114": {"21": 747768, "22": 728021, "23": 710356, "24": 769290, "25": 736200, "26": 701212, "27": 699932, "28": 701211, "29": 768590, "30": 754568, "31": 728551}, "AM0089": {"21": 1926452, "22": 1912258, "23": 1871866, "24": 1899387, "25": 1892128, "26": 1882425, "27": 1861445, "28": 1930431, "29": 1862613, "30": 1924301, "31": 1858904}, "AM0005": {"21": 560538, "22": 552435, "24": 522701, "25": 596413, "26": 584151, "27": 541052, "28": 573768, "29": 602127, "30": 595109, "31": 601793}, "NP0BLR": {"27": 1953173, "28": 1981725, "29": 1948232, "30": 2036253, "31": 1974836}, "NP0BVR": {"27": 1611008, "28": 1663135, "29": 1685780, "30": 1623008, "31": 1703189}, "NP0CEB": {"27": 1076568, "28": 1082665, "29": 1018872, "30": 997840, "31": 1031318}, "NP0CP8": {"27": 1518925, "28": 1472449, "29": 1535614, "30": 1506043, "31": 1476369}}, "fakeMonth": {"parking": {"27": 14938553, "28": 15101927, "29": 15115092, "30": 15291539, "31": 15244183}, "byType": {"중소형(일반)": {"27": 3228628, "28": 3319568, "29": 3306779, "30": 3215957, "31": 3336300}, "대형": {"27": 1861445, "28": 1930431, "29": 1862613, "30": 1924301, "31": 1858904}, "중소형(배분)": {"27": 4447144, "28": 4391419, "29": 4434141, "30": 4515036, "31": 4557296}, "중소형(관리)": {"27": 5401336, "28": 5460509, "29": 5511559, "30": 5636245, "31": 5491683}}}};
+let _fake202610Pending = false;
+function removeFake202610(){
+  const ym='2026-10'; let n=0;
+  const L=uploadedLots[ym];
+  if(L && L.length){
+    const out=[];
+    L.forEach(l=>{
+      const f=l && l.code && FAKE_2026_10.fakeLots[l.code];
+      if(!f){ out.push(l); return; }
+      const days=(l.days||[]).slice(); let hit=false;
+      Object.keys(f).forEach(d=>{ if(days[d-1]===f[d]){ days[d-1]=0; hit=true; n++; } });
+      if(!hit){ out.push(l); return; }
+      if(!days.some(v=>v>0)) return;               // 매출 전체가 가짜였던 주차장 → 삭제
+      const nl=Object.assign({}, l, {days});
+      delete nl.ctMerged;                          // 가짜 행 때문에 붙은 유형 병합 표시 제거
+      out.push(nl);
+    });
+    uploadedLots[ym]=out;
+  }
+  const md=ALL_DATA[ym];
+  if(md){
+    const fm=FAKE_2026_10.fakeMonth;
+    Object.keys(fm.parking).forEach(d=>{
+      const p=md.parking && md.parking[d-1];
+      if(p && p.revenue===fm.parking[d]){ p.revenue=0; n++; }
+    });
+    Object.keys(fm.byType).forEach(ct=>{
+      const a=md.parkingByType && md.parkingByType[ct];
+      if(!a) return;
+      Object.keys(fm.byType[ct]).forEach(d=>{ if(a[d-1]===fm.byType[ct][d]){ a[d-1]=0; n++; } });
+    });
+  }
+  if(n>0){
+    _fake202610Pending=true;
+    if(typeof siteInvalidateCaches==='function') siteInvalidateCaches();
+    console.log('[removeFake202610] 2026-10 가짜 매출 '+n+'건 제거 (메모리)');
+  }
+  return n;
+}
+async function persistFake202610Fix(){
+  if(!_fake202610Pending || !adminUnlocked || !fbReady || !fbDb) return;
+  const okM=await fbSaveMonth('2026-10');
+  const okL=await fbSaveLots('2026-10');
+  if(okM && okL){
+    _fake202610Pending=false;
+    showToast('2026년 10월 가짜 매출 정리 결과를 서버에 저장했습니다.');
+  }
+}
+
 function applyDataCorrections(){
   let removed=0;
   DATA_CORRECTIONS.forEach(c=>{
